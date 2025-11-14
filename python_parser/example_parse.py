@@ -1,19 +1,28 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from python_parser import parse_dopplium_raw
+from python_parser import parse_dopplium
 
 def mag2db(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     """Magnitude to dB, safe for zeros."""
     return 20.0 * np.log10(np.abs(x) + eps)
 
 def main():
-    # --- Parse file ---
-    data, hdr = parse_dopplium_raw(
+    # --- Parse file using automatic format detection ---
+    data, hdr = parse_dopplium(
         "PATH_TO_BIN",
         cast="float32",
         return_complex=True,
         verbose=True
     )
+    
+    # Verify this is RawData format (message_type = 3)
+    if hdr['file'].message_type != 3:
+        raise ValueError(
+            f"This example requires RawData format (message_type=3), "
+            f"but got message_type={hdr['file'].message_type}. "
+            f"For RDCh data (message_type=5), use a different example."
+        )
+    
     # data shape: [samples, chirpsPerTx, channels, frames]
     S, Cptx, K, F = data.shape
     print("Parsed shape [S, chirpsPerTx, channels, frames]:", data.shape)

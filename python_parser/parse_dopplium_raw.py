@@ -7,28 +7,12 @@ from typing import Tuple, Dict, Any, Optional
 
 import numpy as np
 
+from .parse_dopplium_header import FileHeader, parse_file_header
+
 
 # ==============================
 # Dataclasses for headers
 # ==============================
-
-@dataclass
-class FileHeader:
-    magic: str
-    version: int
-    endianness: int
-    compression: int
-    product_id: int
-    message_type: int
-    file_header_size: int
-    body_header_size: int
-    frame_header_size: int
-    file_created_utc_ticks: int
-    last_written_utc_ticks: int
-    total_frames_written: int
-    total_payload_bytes: int
-    reserved1: int
-    node_id: str
 
 
 @dataclass
@@ -89,34 +73,53 @@ def parse_dopplium_raw(
     max_frames: Optional[int] = None,
     cast: str = "float32",          # 'float32' | 'float64' | 'int16' (for real sample_type==0)
     return_complex: bool = True,
-    verbose: bool = True
+    verbose: bool = True,
+    _file_header: Optional[FileHeader] = None,
+    _endian_prefix: Optional[str] = None
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Parse a Dopplium raw file into a numpy array shaped [samples, chirpsPerTx, channel, frame].
 
     - If nTx==1: channel == nRx (receiver index).
     - If nTx>1 : channel == tx*nRx + rx  (0-based; tx in [0..nTx-1], rx in [0..nRx-1]).
+    
+    Parameters:
+    -----------
+    filename : str
+        Path to the binary file
+    max_frames : int, optional
+        Maximum number of frames to read
+    cast : str
+        Data type for output ('float32', 'float64', 'int16')
+    return_complex : bool
+        Whether to return complex data
+    verbose : bool
+        Print parsing information
+    _file_header : FileHeader, optional
+        Pre-parsed file header (internal use)
+    _endian_prefix : str, optional
+        Endianness prefix (internal use)
     """
     with open(filename, "rb") as f:
-        # Peek magic + endianness
-        magic = f.read(4).decode("ascii")
-        if magic != "DOPP":
-            raise ValueError("Invalid magic; not a Dopplium file.")
-        f.seek(6, io.SEEK_SET)
-        endianness_byte = f.read(1)
-        if len(endianness_byte) != 1:
-            raise ValueError("Unable to read endianness byte.")
-        endianness = endianness_byte[0]
-        endian_prefix = "<" if endianness == 1 else ">"
-        if endianness not in (0, 1):
-            # default little-endian if unknown
-            endian_prefix = "<"
-
-        # Rewind and read headers with correct endianness
-        f.seek(0, io.SEEK_SET)
-        FH = _read_file_header(f, endian_prefix)
+        # Use provided header or parse it
+        if _file_header is None or _endian_prefix is None:
+            from .parse_dopplium_header import parse_file_header as parse_fh
+            FH, endian_prefix = parse_fh(filename)
+        else:
+            FH = _file_header
+            endian_prefix = _endian_prefix
+            # Seek to start of file to read headers
+            f.seek(0, io.SEEK_SET)
+            # Skip the file header
+            f.seek(FH.file_header_size, io.SEEK_SET)
+        
         if FH.message_type != 3:
             raise ValueError("This file is not RawData (message_type != 3).")
+        
+        # Position at body header if we parsed the file header ourselves
+        if _file_header is None:
+            f.seek(FH.file_header_size, io.SEEK_SET)
+        
         BH = _read_body_header(f, endian_prefix)
 
         if verbose:
@@ -147,7 +150,7 @@ def parse_dopplium_raw(
         # Determine number of frames from file size
         file_size = _file_size(f)
         bytes_after_headers = file_size - FH.file_header_size - BH.body_header_size
-        frame_unit = BH.frame_header_size + bytes_per_frame
+        frame_unit = FH.frame_header_size + bytes_per_frame
         n_frames_total = max(0, bytes_after_headers // frame_unit)
         n_frames = n_frames_total if max_frames is None else min(n_frames_total, max_frames)
 
@@ -302,32 +305,6 @@ def _file_size(fh: io.BufferedReader) -> int:
     size = fh.tell()
     fh.seek(cur, io.SEEK_SET)
     return size
-
-
-def _read_file_header(f: io.BufferedReader, ep: str) -> FileHeader:
-    # Layout:
-    # 4s magic, H version, B endianness, B compression, B product_id, B message_type,
-    # H file_header_size, I body_header_size, I frame_header_size,
-    # q file_created_ticks, q last_written_ticks,
-    # I total_frames_written, I total_payload_bytes, I reserved1,
-    # 32s node_id
-    fmt = f"{ep}4sHBBBBHI I qqIII32s".replace(" ", "")
-    size = struct.calcsize(fmt)
-    raw = f.read(size)
-    if len(raw) != size:
-        raise EOFError("Failed to read file header.")
-    (magic, version, endianness, compression, product_id, message_type,
-     file_header_size, body_header_size, frame_header_size,
-     file_created_ticks, last_written_ticks, total_frames_written,
-     total_payload_bytes, reserved1, node_id_bytes) = struct.unpack(fmt, raw)
-    magic = magic.decode("ascii")
-    node_id = node_id_bytes.split(b"\x00", 1)[0].decode("ascii", errors="ignore")
-    return FileHeader(
-        magic, version, endianness, compression, product_id, message_type,
-        file_header_size, body_header_size, frame_header_size,
-        file_created_ticks, last_written_ticks,
-        total_frames_written, total_payload_bytes, reserved1, node_id
-    )
 
 
 def _read_body_header(f: io.BufferedReader, ep: str) -> BodyHeader:
