@@ -58,16 +58,16 @@ Returns data shaped `[samples, chirpsPerTx, channels, frames]`:
 - **Frames**: Number of radar frames
 
 ### RDCh Format
-Returns data shaped `[range_bins, doppler_bins, channels, chunks]`:
+Returns data shaped `[range_bins, doppler_bins, channels, cpis]`:
 - **Range bins**: Processed range dimension
 - **Doppler bins**: Processed velocity/Doppler dimension
 - **Channels**: Number of receiver channels
-- **Chunks**: Number of processed data chunks
+- **CPIs**: Number of Coherent Processing Intervals
 
 ## Options
 
 **Common options** (`parse_dopplium`, `parse_dopplium_raw`, `parse_dopplium_rdch`):
-- `max_chunks_or_frames` / `max_frames` / `max_chunks`: Limit chunks/frames to read
+- `max_cpis_or_frames` / `max_frames` / `max_cpis`: Limit CPIs/frames to read
 - `verbose`: Show parsing info
 
 **RawData-specific options**:

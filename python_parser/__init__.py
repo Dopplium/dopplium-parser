@@ -9,7 +9,7 @@ from .parse_dopplium_raw import (
 from .parse_dopplium_rdch import (
     parse_dopplium_rdch,
     RDChBodyHeader,
-    ChunkHeader,
+    CPIHeader,
 )
 from .parse_dopplium_header import FileHeader
 
@@ -22,6 +22,6 @@ __all__ = [
     "BodyHeader",
     "FrameHeader",
     "RDChBodyHeader",
-    "ChunkHeader",
+    "CPIHeader",
 ]
 

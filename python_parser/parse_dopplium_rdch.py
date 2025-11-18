@@ -2,7 +2,7 @@
 Parser for Dopplium RDCh (Range-Doppler-Channel) binary format.
 Reads processed radar data files written by RDChBinaryWriter.
 
-Returns numpy arrays shaped [range, doppler, channels, chunks] and all headers.
+Returns numpy arrays shaped [range, doppler, channels, cpis] and all headers.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class RDChBodyHeader:
     config_magic: str
     config_version: int
     body_header_size: int
-    chunk_header_size: int
+    cpi_header_size: int
     reserved1: int
     # Dimensions
     n_range_bins: int
@@ -63,13 +63,13 @@ class RDChBodyHeader:
 
 
 @dataclass
-class ChunkHeader:
-    """RDCh chunk header (22 bytes)."""
-    chunk_magic: str
-    chunk_header_size: int
-    chunk_timestamp_utc_ticks: int
-    chunk_number: int
-    chunk_payload_size: int
+class CPIHeader:
+    """RDCh CPI header (22 bytes)."""
+    cpi_magic: str
+    cpi_header_size: int
+    cpi_timestamp_utc_ticks: int
+    cpi_number: int
+    cpi_payload_size: int
 
 
 # ==============================
@@ -79,20 +79,20 @@ class ChunkHeader:
 def parse_dopplium_rdch(
     filename: str,
     *,
-    max_chunks: Optional[int] = None,
+    max_cpis: Optional[int] = None,
     verbose: bool = True,
     _file_header: Optional[FileHeader] = None,
     _endian_prefix: Optional[str] = None
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
-    Parse a Dopplium RDCh file into a numpy array shaped [range, doppler, channels, chunks].
+    Parse a Dopplium RDCh file into a numpy array shaped [range, doppler, channels, cpis].
     
     Parameters:
     -----------
     filename : str
         Path to the RDCh binary file
-    max_chunks : int, optional
-        Maximum number of chunks to read (None = all chunks)
+    max_cpis : int, optional
+        Maximum number of CPIs to read (None = all CPIs)
     verbose : bool
         Print parsing information
     _file_header : FileHeader, optional
@@ -104,9 +104,9 @@ def parse_dopplium_rdch(
     --------
     tuple : (data, headers)
         data : np.ndarray
-            Processed radar data [range_bins, doppler_bins, channels, chunks]
+            Processed radar data [range_bins, doppler_bins, channels, cpis]
         headers : dict
-            Dictionary containing 'file', 'body', and 'chunk' headers
+            Dictionary containing 'file', 'body', and 'cpi' headers
     """
     with open(filename, "rb") as f:
         # Use provided header or parse it
@@ -141,95 +141,95 @@ def parse_dopplium_rdch(
         # Map data type code to numpy dtype
         dtype = _map_data_type(BH.data_type)
         
-        # Determine number of chunks from file size
+        # Determine number of CPIs from file size
         file_size = _file_size(f)
         bytes_after_headers = file_size - FH.file_header_size - BH.body_header_size
-        chunk_unit = FH.frame_header_size + (n_range * n_doppler * n_channels * dtype.itemsize)
+        cpi_unit = FH.frame_header_size + (n_range * n_doppler * n_channels * dtype.itemsize)
         
-        # Calculate expected payload size per chunk
+        # Calculate expected payload size per CPI
         expected_payload_size = n_range * n_doppler * n_channels * dtype.itemsize
         
         if verbose:
-            print(f"\nExpected payload size per chunk: {expected_payload_size} bytes")
+            print(f"\nExpected payload size per CPI: {expected_payload_size} bytes")
             print(f"Bytes after headers: {bytes_after_headers}")
         
-        # Estimate number of chunks
-        # We'll read chunk by chunk since payload sizes might vary
-        n_chunks_estimate = max(0, bytes_after_headers // chunk_unit)
+        # Estimate number of CPIs
+        # We'll read CPI by CPI since payload sizes might vary
+        n_cpis_estimate = max(0, bytes_after_headers // cpi_unit)
         
         if verbose:
-            print(f"Estimated chunks in file: {n_chunks_estimate}")
+            print(f"Estimated CPIs in file: {n_cpis_estimate}")
         
-        n_chunks = n_chunks_estimate if max_chunks is None else min(n_chunks_estimate, max_chunks)
+        n_cpis = n_cpis_estimate if max_cpis is None else min(n_cpis_estimate, max_cpis)
         
         # Allocate output array
         # We'll start with estimated size and potentially resize if needed
-        data = np.zeros((n_range, n_doppler, n_channels, n_chunks), dtype=dtype)
+        data = np.zeros((n_range, n_doppler, n_channels, n_cpis), dtype=dtype)
         
-        # Read chunks
+        # Read CPIs
         f.seek(FH.file_header_size + BH.body_header_size, io.SEEK_SET)
-        chunk_headers = []
+        cpi_headers = []
         
-        chunks_read = 0
-        while chunks_read < n_chunks:
+        cpis_read = 0
+        while cpis_read < n_cpis:
             try:
                 # Check if we have enough bytes left
                 current_pos = f.tell()
                 if current_pos >= file_size:
                     break
                 
-                CH = _read_chunk_header(f, endian_prefix)
-                chunk_headers.append(CH)
+                CH = _read_cpi_header(f, endian_prefix)
+                cpi_headers.append(CH)
                 
-                if verbose and (chunks_read == 0 or (chunks_read + 1) % 10 == 0):
-                    print(f"  Reading chunk {chunks_read + 1}/{n_chunks}: "
-                          f"number={CH.chunk_number}, size={CH.chunk_payload_size} bytes")
+                if verbose and (cpis_read == 0 or (cpis_read + 1) % 10 == 0):
+                    print(f"  Reading CPI {cpis_read + 1}/{n_cpis}: "
+                          f"number={CH.cpi_number}, size={CH.cpi_payload_size} bytes")
                 
-                # Validate chunk payload size
-                if CH.chunk_payload_size != expected_payload_size:
+                # Validate CPI payload size
+                if CH.cpi_payload_size != expected_payload_size:
                     if verbose:
-                        print(f"Warning: Chunk {chunks_read} payload size mismatch: "
-                              f"expected={expected_payload_size}, got={CH.chunk_payload_size}")
+                        print(f"Warning: CPI {cpis_read} payload size mismatch: "
+                              f"expected={expected_payload_size}, got={CH.cpi_payload_size}")
                 
                 # Read payload
-                payload_bytes = f.read(CH.chunk_payload_size)
-                if len(payload_bytes) != CH.chunk_payload_size:
-                    raise EOFError(f"Unexpected EOF while reading chunk {chunks_read} payload.")
+                payload_bytes = f.read(CH.cpi_payload_size)
+                if len(payload_bytes) != CH.cpi_payload_size:
+                    raise EOFError(f"Unexpected EOF while reading CPI {cpis_read} payload.")
                 
                 # Reshape payload to [range, doppler, channels]
-                chunk_data = np.frombuffer(payload_bytes, dtype=dtype)
+                cpi_data = np.frombuffer(payload_bytes, dtype=dtype)
                 
                 # Reshape from flat array to 3D
                 try:
-                    chunk_data = chunk_data.reshape((n_range, n_doppler, n_channels), order='C')
-                    data[:, :, :, chunks_read] = chunk_data
+                    cpi_data = cpi_data.reshape((n_range, n_doppler, n_channels), order='C')
+                    data[:, :, :, cpis_read] = cpi_data
                 except ValueError as e:
-                    raise ValueError(f"Chunk {chunks_read}: Cannot reshape payload. "
+                    raise ValueError(f"CPI {cpis_read}: Cannot reshape payload. "
                                    f"Expected {n_range}×{n_doppler}×{n_channels} = "
                                    f"{n_range * n_doppler * n_channels} elements, "
-                                   f"got {chunk_data.size}. Error: {e}")
+                                   f"got {cpi_data.size}. Error: {e}")
                 
-                chunks_read += 1
+                cpis_read += 1
                 
             except EOFError:
                 if verbose:
-                    print(f"Reached end of file after reading {chunks_read} chunks.")
+                    print(f"Reached end of file after reading {cpis_read} CPIs.")
                 break
         
-        # Trim data array if we read fewer chunks than estimated
-        if chunks_read < n_chunks:
-            data = data[:, :, :, :chunks_read]
+        # Trim data array if we read fewer CPIs than estimated
+        if cpis_read < n_cpis:
+            data = data[:, :, :, :cpis_read]
         
         headers = {
             "file": FH,
             "body": BH,
-            "chunk": chunk_headers,
+            "cpi": cpi_headers,
         }
         
         if verbose:
             print(f"\nParsed data shape: {tuple(data.shape)}  "
-                  f"[range_bins, doppler_bins, channels, chunks]")
-            print(f"Total chunks read: {chunks_read}")
+                  f"[range_bins, doppler_bins, channels, cpis]")
+            print(f"Total CPIs read: {cpis_read}")
         
         return data, headers
 
@@ -254,7 +254,7 @@ def _read_rdch_body_header(f: io.BufferedReader, ep: str) -> RDChBodyHeader:
         "4s"   # config_magic (RDCH)
         "H"    # config_version
         "H"    # body_header_size
-        "H"    # chunk_header_size
+        "H"    # cpi_header_size
         "H"    # reserved1
         "I"    # n_range_bins
         "I"    # n_doppler_bins
@@ -293,7 +293,7 @@ def _read_rdch_body_header(f: io.BufferedReader, ep: str) -> RDChBodyHeader:
         config_magic=unpacked[0].decode("ascii"),
         config_version=unpacked[1],
         body_header_size=unpacked[2],
-        chunk_header_size=unpacked[3],
+        cpi_header_size=unpacked[3],
         reserved1=unpacked[4],
         n_range_bins=unpacked[5],
         n_doppler_bins=unpacked[6],
@@ -323,27 +323,27 @@ def _read_rdch_body_header(f: io.BufferedReader, ep: str) -> RDChBodyHeader:
     )
 
 
-def _read_chunk_header(f: io.BufferedReader, ep: str) -> ChunkHeader:
-    """Read RDCh chunk header (22 bytes)."""
+def _read_cpi_header(f: io.BufferedReader, ep: str) -> CPIHeader:
+    """Read RDCh CPI header (22 bytes)."""
     fmt = f"{ep}4sHqII"
     size = struct.calcsize(fmt)
     raw = f.read(size)
     if len(raw) != size:
-        raise EOFError("Failed to read chunk header.")
+        raise EOFError("Failed to read CPI header.")
     
-    (chunk_magic_b, chunk_header_size, chunk_timestamp_utc_ticks,
-     chunk_number, chunk_payload_size) = struct.unpack(fmt, raw)
+    (cpi_magic_b, cpi_header_size, cpi_timestamp_utc_ticks,
+     cpi_number, cpi_payload_size) = struct.unpack(fmt, raw)
     
-    chunk_magic = chunk_magic_b.decode("ascii")
-    if chunk_magic != "CHUN":
-        raise ValueError(f"Invalid chunk magic: expected 'CHUN', got '{chunk_magic}'")
+    cpi_magic = cpi_magic_b.decode("ascii")
+    if cpi_magic != "CPII":
+        raise ValueError(f"Invalid CPI magic: expected 'CPII', got '{cpi_magic}'")
     
-    return ChunkHeader(
-        chunk_magic=chunk_magic,
-        chunk_header_size=chunk_header_size,
-        chunk_timestamp_utc_ticks=chunk_timestamp_utc_ticks,
-        chunk_number=chunk_number,
-        chunk_payload_size=chunk_payload_size,
+    return CPIHeader(
+        cpi_magic=cpi_magic,
+        cpi_header_size=cpi_header_size,
+        cpi_timestamp_utc_ticks=cpi_timestamp_utc_ticks,
+        cpi_number=cpi_number,
+        cpi_payload_size=cpi_payload_size,
     )
 
 
@@ -378,7 +378,7 @@ def _print_header_summary(FH: FileHeader, BH: RDChBodyHeader) -> None:
     print(f"Magic={FH.magic}  Version={FH.version}  "
           f"Endianness={'LE' if FH.endianness==1 else 'BE'}  MessageType={FH.message_type}")
     print(f"FileHdr={FH.file_header_size}  BodyHdr={BH.body_header_size}  "
-          f"ChunkHdr={BH.chunk_header_size}  TotalChunksWritten={FH.total_frames_written}")
+          f"CPIHdr={BH.cpi_header_size}  TotalCPIsWritten={FH.total_frames_written}")
     print(f"NodeId=\"{FH.node_id}\"")
     
     print("\n-- RDCh Configuration --")

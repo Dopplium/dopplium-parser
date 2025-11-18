@@ -16,7 +16,7 @@ from .parse_dopplium_rdch import parse_dopplium_rdch
 def parse_dopplium(
     filename: str,
     *,
-    max_chunks_or_frames: Optional[int] = None,
+    max_cpis_or_frames: Optional[int] = None,
     cast: str = "float32",
     return_complex: bool = True,
     verbose: bool = True
@@ -33,8 +33,8 @@ def parse_dopplium(
     -----------
     filename : str
         Path to the Dopplium binary file
-    max_chunks_or_frames : int, optional
-        Maximum number of chunks/frames to read (None = all)
+    max_cpis_or_frames : int, optional
+        Maximum number of CPIs/frames to read (None = all)
     cast : str
         Data type for output ('float32', 'float64', 'int16')
         Only used for RawData parsing
@@ -50,7 +50,7 @@ def parse_dopplium(
         data : np.ndarray
             Parsed data array (shape depends on message type)
             - RawData: [samples, chirpsPerTx, channels, frames]
-            - RDCh: [range_bins, doppler_bins, channels, chunks]
+            - RDCh: [range_bins, doppler_bins, channels, cpis]
         headers : dict
             Dictionary containing parsed headers
     
@@ -72,7 +72,7 @@ def parse_dopplium(
             print("Routing to RawData parser...")
         return parse_dopplium_raw(
             filename,
-            max_frames=max_chunks_or_frames,
+            max_frames=max_cpis_or_frames,
             cast=cast,
             return_complex=return_complex,
             verbose=verbose,
@@ -86,7 +86,7 @@ def parse_dopplium(
             print("Routing to RDCh parser...")
         return parse_dopplium_rdch(
             filename,
-            max_chunks=max_chunks_or_frames,
+            max_cpis=max_cpis_or_frames,
             verbose=verbose,
             _file_header=file_header,
             _endian_prefix=endian_prefix
