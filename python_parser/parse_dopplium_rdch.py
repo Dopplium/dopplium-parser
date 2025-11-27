@@ -1,7 +1,10 @@
 """
 Parser for Dopplium RDCh (Range-Doppler-Channel) binary format.
-Reads processed radar data files written by RDChBinaryWriter.
 
+Supports:
+- Version 3, message_type 2: RDCMaps/RDCh data
+
+Reads processed radar data files written by RDChBinaryWriter.
 Returns numpy arrays shaped [range, doppler, channels, cpis] and all headers.
 
 Updated Format Notes:
@@ -123,8 +126,8 @@ def parse_dopplium_rdch(
             # Skip the file header
             f.seek(FH.file_header_size, io.SEEK_SET)
         
-        if FH.message_type != 5:
-            raise ValueError(f"This file is not RDCh (message_type={FH.message_type}, expected 5).")
+        if FH.message_type != 2:
+            raise ValueError(f"This file is not RDCh/RDCMaps (message_type={FH.message_type}, expected 2).")
         
         # Position at body header if we parsed the file header ourselves
         if _file_header is None:

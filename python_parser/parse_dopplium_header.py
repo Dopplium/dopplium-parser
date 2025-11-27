@@ -1,6 +1,9 @@
 """
 Common header parsing for Dopplium binary files.
-Handles initial file header parsing and message type detection.
+Handles initial file header parsing, version detection, and message type detection.
+
+Supported file versions: 2, 3
+File header format is the same for both versions (80 bytes minimum).
 """
 
 from __future__ import annotations
@@ -111,6 +114,24 @@ def read_file_header(f: io.BufferedReader, endian_prefix: str) -> FileHeader:
     )
 
 
+def validate_version(version: int) -> None:
+    """
+    Validate that the file version is supported.
+    
+    Parameters:
+    -----------
+    version : int
+        File version from header
+    
+    Raises:
+    -------
+    ValueError
+        If version is not supported
+    """
+    if version not in (2, 3):
+        raise ValueError(f"Unsupported file version: {version}. Supported versions: 2, 3")
+
+
 def parse_file_header(filename: str) -> Tuple[FileHeader, str]:
     """
     Parse the file header from a Dopplium binary file.
@@ -124,9 +145,14 @@ def parse_file_header(filename: str) -> Tuple[FileHeader, str]:
     --------
     tuple : (file_header, endian_prefix)
         file_header : FileHeader
-            Parsed file header
+            Parsed file header (versions 2 and 3 use same format)
         endian_prefix : str
             '<' for little-endian, '>' for big-endian
+    
+    Raises:
+    -------
+    ValueError
+        If file format is invalid or version is unsupported
     """
     with open(filename, "rb") as f:
         # Detect endianness
@@ -135,6 +161,9 @@ def parse_file_header(filename: str) -> Tuple[FileHeader, str]:
         # Rewind to beginning and read full file header
         f.seek(0, io.SEEK_SET)
         file_header = read_file_header(f, endian_prefix)
+        
+        # Validate version
+        validate_version(file_header.version)
         
         return file_header, endian_prefix
 

@@ -1,6 +1,22 @@
 """
 Main dispatcher for parsing Dopplium binary files.
-Automatically detects the message type and routes to the appropriate parser.
+Automatically detects the file version and message type, then routes to the appropriate parser.
+
+Supported message types:
+  Version 2:
+    0 - Unknown (unsupported)
+    1 - Detections (not yet implemented)
+    2 - Tracks (not yet implemented)
+    3 - RawData/ADC (supported)
+    4 - Aggregated (not yet implemented)
+  Version 3:
+    0 - Unknown (unsupported)
+    1 - ADCData (supported via RawData parser)
+    2 - RDCMaps/RDCh (supported)
+    3 - RadarCube (not yet implemented)
+    4 - Detections (not yet implemented)
+    5 - Blobs (not yet implemented)
+    6 - Tracks (not yet implemented)
 """
 
 from __future__ import annotations
@@ -24,10 +40,13 @@ def parse_dopplium(
     """
     Parse a Dopplium binary file, automatically detecting the format.
     
-    This function reads the file header to determine the message type,
-    then dispatches to the appropriate parser:
-    - message_type == 3: RawData -> parse_dopplium_raw
-    - message_type == 5: RDCh -> parse_dopplium_rdch
+    This function reads the file header to determine the file version and message type,
+    then dispatches to the appropriate parser using version-specific message type mappings.
+    
+    Supported combinations:
+    - Version 2, message_type 3: RawData/ADC -> parse_dopplium_raw
+    - Version 3, message_type 1: ADCData -> parse_dopplium_raw
+    - Version 3, message_type 2: RDCMaps/RDCh -> parse_dopplium_rdch
     
     Parameters:
     -----------
@@ -57,46 +76,85 @@ def parse_dopplium(
     Raises:
     -------
     ValueError
-        If the message type is not supported
+        If the version or message type is not supported
     """
-    # Parse file header to determine message type
+    # Parse file header to determine version and message type
     file_header, endian_prefix = parse_file_header(filename)
     
     if verbose:
-        print(f"Detected message_type: {file_header.message_type}")
+        print(f"Detected file version: {file_header.version}, message_type: {file_header.message_type}")
     
-    # Dispatch to appropriate parser based on message type
-    if file_header.message_type == 3:
-        # RawData
-        if verbose:
-            print("Routing to RawData parser...")
-        return parse_dopplium_raw(
-            filename,
-            max_frames=max_cpis_or_frames,
-            cast=cast,
-            return_complex=return_complex,
-            verbose=verbose,
-            _file_header=file_header,
-            _endian_prefix=endian_prefix
-        )
+    # Dispatch based on version and message type
+    version = file_header.version
+    msg_type = file_header.message_type
     
-    elif file_header.message_type == 5:
-        # RDCh
-        if verbose:
-            print("Routing to RDCh parser...")
-        return parse_dopplium_rdch(
-            filename,
-            max_cpis=max_cpis_or_frames,
-            verbose=verbose,
-            _file_header=file_header,
-            _endian_prefix=endian_prefix
-        )
+    # Version 2 message type mappings
+    if version == 2:
+        if msg_type == 0:
+            raise ValueError("File has unknown message_type (0). Cannot parse.")
+        elif msg_type == 1:
+            raise NotImplementedError("Version 2 Detections (message_type=1) not yet implemented.")
+        elif msg_type == 2:
+            raise NotImplementedError("Version 2 Tracks (message_type=2) not yet implemented.")
+        elif msg_type == 3:
+            # RawData/ADC
+            if verbose:
+                print("Routing to RawData/ADC parser...")
+            return parse_dopplium_raw(
+                filename,
+                max_frames=max_cpis_or_frames,
+                cast=cast,
+                return_complex=return_complex,
+                verbose=verbose,
+                _file_header=file_header,
+                _endian_prefix=endian_prefix
+            )
+        elif msg_type == 4:
+            raise NotImplementedError("Version 2 Aggregated (message_type=4) not yet implemented.")
+        else:
+            raise ValueError(f"Unsupported Version 2 message_type: {msg_type}")
+    
+    # Version 3 message type mappings
+    elif version == 3:
+        if msg_type == 0:
+            raise ValueError("File has unknown message_type (0). Cannot parse.")
+        elif msg_type == 1:
+            # ADCData
+            if verbose:
+                print("Routing to ADCData parser...")
+            return parse_dopplium_raw(
+                filename,
+                max_frames=max_cpis_or_frames,
+                cast=cast,
+                return_complex=return_complex,
+                verbose=verbose,
+                _file_header=file_header,
+                _endian_prefix=endian_prefix
+            )
+        elif msg_type == 2:
+            # RDCMaps/RDCh
+            if verbose:
+                print("Routing to RDCMaps/RDCh parser...")
+            return parse_dopplium_rdch(
+                filename,
+                max_cpis=max_cpis_or_frames,
+                verbose=verbose,
+                _file_header=file_header,
+                _endian_prefix=endian_prefix
+            )
+        elif msg_type == 3:
+            raise NotImplementedError("Version 3 RadarCube (message_type=3) not yet implemented.")
+        elif msg_type == 4:
+            raise NotImplementedError("Version 3 Detections (message_type=4) not yet implemented.")
+        elif msg_type == 5:
+            raise NotImplementedError("Version 3 Blobs (message_type=5) not yet implemented.")
+        elif msg_type == 6:
+            raise NotImplementedError("Version 3 Tracks (message_type=6) not yet implemented.")
+        else:
+            raise ValueError(f"Unsupported Version 3 message_type: {msg_type}")
     
     else:
-        raise ValueError(
-            f"Unsupported message_type: {file_header.message_type}. "
-            f"Supported types: 3 (RawData), 5 (RDCh)"
-        )
+        raise ValueError(f"Unsupported file version: {version}. Supported versions: 2, 3")
 
 
 # Re-export individual parsers for direct use

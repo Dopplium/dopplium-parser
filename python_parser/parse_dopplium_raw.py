@@ -1,3 +1,14 @@
+"""
+Parser for Dopplium RawData/ADC binary format.
+
+Supports:
+- Version 2, message_type 3: RawData/ADC
+- Version 3, message_type 1: ADCData
+
+Returns numpy arrays shaped [samples, chirpsPerTx, channels, frames] and all headers.
+Handles both body header config_version 1 and 2, with different IQ ordering schemes.
+"""
+
 from __future__ import annotations
 import io
 import math
@@ -258,8 +269,14 @@ def parse_dopplium_raw(
                             ch_out = tx_idx * nRx + rx
                             data[:, c_tx, ch_out, fi] = vals
                     else:
-                        # COMPLEX
-                        z = _decode_iq(seg, S, BH.iq_order, cast, return_complex=return_complex)
+                        # COMPLEX - decode based on body header config_version
+                        if BH.config_version == 1:
+                            z = _decode_iq_v1(seg, S, BH.iq_order, cast, return_complex=return_complex)
+                        elif BH.config_version == 2:
+                            z = _decode_iq_v2(seg, S, BH.iq_order, cast, return_complex=return_complex)
+                        else:
+                            raise ValueError(f"Unsupported body header config_version: {BH.config_version}")
+                        
                         if return_complex:
                             if nTx == 1:
                                 data[:, c_tx, rx, fi] = z
@@ -431,13 +448,14 @@ def _map_real_float_dtype(cast: str):
     return np.float64 if cast == "float64" else np.float32
 
 
-def _decode_iq(seg_int16: np.ndarray, S: int, iq_order: int, cast: str, return_complex: bool) -> np.ndarray:
+def _decode_iq_v1(seg_int16: np.ndarray, S: int, iq_order: int, cast: str, return_complex: bool) -> np.ndarray:
     """
-    Decode a single (channel,chirp) complex vector of length S from an int16 segment of length 2*S.
-    Orders:
-      0 = IQ           (I,Q interleaved)
-      1 = QI           (Q,I interleaved)
-      2 = NonInterleaved (IIII... QQQQ...)
+    Decode IQ for body header config_version 1.
+    
+    IQ orders (v1):
+      0 = IQ             (I,Q interleaved)
+      1 = QI             (Q,I interleaved)
+      2 = NonInterleaved (I first, then Q)
       3 = BlockInterleaved ([I0 I1 Q0 Q1 I2 I3 Q2 Q3 ...])
     """
     if seg_int16.size != 2 * S:
@@ -481,6 +499,98 @@ def _decode_iq(seg_int16: np.ndarray, S: int, iq_order: int, cast: str, return_c
                     qi += take
     else:
         raise ValueError(f"Unsupported iq_order: {iq_order}")
+
+    if return_complex:
+        Iflt = I.astype(_map_real_float_dtype(cast), copy=False)
+        Qflt = Q.astype(_map_real_float_dtype(cast), copy=False)
+        return Iflt + 1j * Qflt
+    else:
+        # return_complex=False: we still return a complex vector upstream but store only real later
+        Iflt = I.astype(_map_real_float_dtype(cast), copy=False)
+        Qflt = Q.astype(_map_real_float_dtype(cast), copy=False)
+        return Iflt + 1j * Qflt
+
+
+def _decode_iq_v2(seg_int16: np.ndarray, S: int, iq_order: int, cast: str, return_complex: bool) -> np.ndarray:
+    """
+    Decode IQ for body header config_version 2.
+    
+    IQ orders (v2):
+      0 = IQ                (I,Q interleaved)
+      1 = QI                (Q,I interleaved)
+      2 = NonInterleaved    (I first, then Q)
+      3 = NonInterleavedQ   (Q first, then I) - NEW in v2
+      4 = BlockInterleaved  ([I0 I1 Q0 Q1 I2 I3 Q2 Q3 ...]) - moved from v1's order 3
+      5 = BlockInterleavedQ ([Q0 Q1 I0 I1 Q2 Q3 I2 I3 ...]) - NEW in v2
+    """
+    if seg_int16.size != 2 * S:
+        # try to coerce if header rounding gave slight mismatch
+        if seg_int16.size < 2 * S:
+            raise ValueError("Segment too small for complex IQ.")
+        seg_int16 = seg_int16[: 2 * S]
+
+    if iq_order == 0:  # IQ
+        I = seg_int16[0::2]
+        Q = seg_int16[1::2]
+    elif iq_order == 1:  # QI
+        Q = seg_int16[0::2]
+        I = seg_int16[1::2]
+    elif iq_order == 2:  # NonInterleaved (I then Q)
+        I = seg_int16[:S]
+        Q = seg_int16[S:2 * S]
+    elif iq_order == 3:  # NonInterleavedQ (Q then I) - NEW in v2
+        Q = seg_int16[:S]
+        I = seg_int16[S:2 * S]
+    elif iq_order == 4:  # BlockInterleaved
+        if S % 2 == 0:
+            # MATLAB used column-major reshape. Recreate with order='F'.
+            g = seg_int16.reshape((4, S // 2), order="F")
+            I = g[0:2, :].reshape(-1, order="F")
+            Q = g[2:4, :].reshape(-1, order="F")
+        else:
+            # robust fallback for odd S
+            I = np.empty(S, dtype=np.int16)
+            Q = np.empty(S, dtype=np.int16)
+            ii = qi = 0
+            k = 0
+            twoS = 2 * S
+            while k < twoS:
+                take = min(2, S - ii)
+                if take > 0:
+                    I[ii:ii + take] = seg_int16[k:k + take]
+                    k += take
+                    ii += take
+                take = min(2, S - qi)
+                if take > 0:
+                    Q[qi:qi + take] = seg_int16[k:k + take]
+                    k += take
+                    qi += take
+    elif iq_order == 5:  # BlockInterleavedQ (Q then I blocks) - NEW in v2
+        if S % 2 == 0:
+            # Similar to BlockInterleaved but Q blocks come first
+            g = seg_int16.reshape((4, S // 2), order="F")
+            Q = g[0:2, :].reshape(-1, order="F")
+            I = g[2:4, :].reshape(-1, order="F")
+        else:
+            # robust fallback for odd S
+            I = np.empty(S, dtype=np.int16)
+            Q = np.empty(S, dtype=np.int16)
+            ii = qi = 0
+            k = 0
+            twoS = 2 * S
+            while k < twoS:
+                take = min(2, S - qi)
+                if take > 0:
+                    Q[qi:qi + take] = seg_int16[k:k + take]
+                    k += take
+                    qi += take
+                take = min(2, S - ii)
+                if take > 0:
+                    I[ii:ii + take] = seg_int16[k:k + take]
+                    k += take
+                    ii += take
+    else:
+        raise ValueError(f"Unsupported iq_order for config_version 2: {iq_order} (valid: 0-5)")
 
     if return_complex:
         Iflt = I.astype(_map_real_float_dtype(cast), copy=False)
