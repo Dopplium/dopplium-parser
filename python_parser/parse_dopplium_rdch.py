@@ -3,6 +3,13 @@ Parser for Dopplium RDCh (Range-Doppler-Channel) binary format.
 Reads processed radar data files written by RDChBinaryWriter.
 
 Returns numpy arrays shaped [range, doppler, channels, cpis] and all headers.
+
+Updated Format Notes:
+- Data stored in Fortran-order (column-major) with range varying fastest
+- Removed fields: start_freq_ghz, bandwidth_ghz, sample_rate_ksps, frame_period_ms,
+  n_samples_original, n_chirps_original, n_accumulated_frames
+- Added fields: physical_velocity_resolution_mps, integration_time_ms, channel_order
+- Body header: 100 bytes used, 156 bytes reserved (256 total)
 """
 
 from __future__ import annotations
@@ -41,24 +48,20 @@ class RDChBodyHeader:
     velocity_min_mps: float
     velocity_max_mps: float
     velocity_resolution_mps: float
-    # Radar parameters
-    start_freq_ghz: float
-    bandwidth_ghz: float
-    sample_rate_ksps: float
-    frame_period_ms: float
+    physical_velocity_resolution_mps: float
     # Data type
     data_type: int  # 0=complex64, 1=complex128, 2=float32, 3=float64, 4=int16, 5=int32
     # Processing parameters
     nfft_range: int
     nfft_doppler: int
-    n_samples_original: int
-    n_chirps_original: int
     range_window_type: int  # 0=none, 1=hann, 2=hamming, 3=blackman, 4=kaiser
     doppler_window_type: int
     fftshift_range: int  # 0=no, 1=yes
     fftshift_doppler: int
     range_half_spectrum: int
-    n_accumulated_frames: int
+    integration_time_ms: float
+    # Channel order
+    channel_order: np.ndarray  # 30 int8 values
     _reserved3: bytes
 
 
@@ -111,8 +114,7 @@ def parse_dopplium_rdch(
     with open(filename, "rb") as f:
         # Use provided header or parse it
         if _file_header is None or _endian_prefix is None:
-            from .parse_dopplium_header import parse_file_header as parse_fh
-            FH, endian_prefix = parse_fh(filename)
+            FH, endian_prefix = parse_file_header(filename)
         else:
             FH = _file_header
             endian_prefix = _endian_prefix
@@ -197,11 +199,12 @@ def parse_dopplium_rdch(
                     raise EOFError(f"Unexpected EOF while reading CPI {cpis_read} payload.")
                 
                 # Reshape payload to [range, doppler, channels]
+                # Note: Data is stored in Fortran-order (column-major) with range varying fastest
                 cpi_data = np.frombuffer(payload_bytes, dtype=dtype)
                 
-                # Reshape from flat array to 3D
+                # Reshape from flat array to 3D using Fortran-order
                 try:
-                    cpi_data = cpi_data.reshape((n_range, n_doppler, n_channels), order='C')
+                    cpi_data = cpi_data.reshape((n_range, n_doppler, n_channels), order='F')
                     data[:, :, :, cpis_read] = cpi_data
                 except ValueError as e:
                     raise ValueError(f"CPI {cpis_read}: Cannot reshape payload. "
@@ -265,22 +268,18 @@ def _read_rdch_body_header(f: io.BufferedReader, ep: str) -> RDChBodyHeader:
         "f"    # velocity_min_mps
         "f"    # velocity_max_mps
         "f"    # velocity_resolution_mps
-        "f"    # start_freq_ghz
-        "f"    # bandwidth_ghz
-        "f"    # sample_rate_ksps
-        "f"    # frame_period_ms
+        "f"    # physical_velocity_resolution_mps
         "B"    # data_type
         "I"    # nfft_range
         "I"    # nfft_doppler
-        "I"    # n_samples_original
-        "I"    # n_chirps_original
         "B"    # range_window_type
         "B"    # doppler_window_type
         "B"    # fftshift_range
         "B"    # fftshift_doppler
         "B"    # range_half_spectrum
-        "I"    # n_accumulated_frames
-        "166s" # reserved3
+        "f"    # integration_time_ms
+        "30b"  # channel_order (30 × int8)
+        "156s" # reserved3
     )
     size = struct.calcsize(fmt)
     raw = f.read(size)
@@ -288,6 +287,9 @@ def _read_rdch_body_header(f: io.BufferedReader, ep: str) -> RDChBodyHeader:
         raise EOFError(f"Failed to read body header. Expected {size} bytes, got {len(raw)}.")
     
     unpacked = struct.unpack(fmt, raw)
+    
+    # Extract channel order as numpy array
+    channel_order = np.array(unpacked[24:54], dtype=np.int8)
     
     return RDChBodyHeader(
         config_magic=unpacked[0].decode("ascii"),
@@ -304,22 +306,18 @@ def _read_rdch_body_header(f: io.BufferedReader, ep: str) -> RDChBodyHeader:
         velocity_min_mps=unpacked[11],
         velocity_max_mps=unpacked[12],
         velocity_resolution_mps=unpacked[13],
-        start_freq_ghz=unpacked[14],
-        bandwidth_ghz=unpacked[15],
-        sample_rate_ksps=unpacked[16],
-        frame_period_ms=unpacked[17],
-        data_type=unpacked[18],
-        nfft_range=unpacked[19],
-        nfft_doppler=unpacked[20],
-        n_samples_original=unpacked[21],
-        n_chirps_original=unpacked[22],
-        range_window_type=unpacked[23],
-        doppler_window_type=unpacked[24],
-        fftshift_range=unpacked[25],
-        fftshift_doppler=unpacked[26],
-        range_half_spectrum=unpacked[27],
-        n_accumulated_frames=unpacked[28],
-        _reserved3=unpacked[29],
+        physical_velocity_resolution_mps=unpacked[14],
+        data_type=unpacked[15],
+        nfft_range=unpacked[16],
+        nfft_doppler=unpacked[17],
+        range_window_type=unpacked[18],
+        doppler_window_type=unpacked[19],
+        fftshift_range=unpacked[20],
+        fftshift_doppler=unpacked[21],
+        range_half_spectrum=unpacked[22],
+        integration_time_ms=unpacked[23],
+        channel_order=channel_order,
+        _reserved3=unpacked[54],
     )
 
 
@@ -386,27 +384,32 @@ def _print_header_summary(FH: FileHeader, BH: RDChBodyHeader) -> None:
                 if BH.data_type < 6 else 'unknown'
     print(f"Dimensions: Range={BH.n_range_bins}, Doppler={BH.n_doppler_bins}, Channels={BH.n_channels}")
     print(f"Data type: {dtype_str}")
+    print(f"Storage order: Fortran (column-major, range varies fastest)")
     
     print("\n-- Range/Velocity Axes --")
     print(f"Range: {BH.range_min_m:.2f} to {BH.range_max_m:.2f} m, "
           f"resolution={BH.range_resolution_m:.3f} m")
-    print(f"Velocity: {BH.velocity_min_mps:.2f} to {BH.velocity_max_mps:.2f} m/s, "
-          f"resolution={BH.velocity_resolution_mps:.3f} m/s")
-    
-    print("\n-- Radar Parameters --")
-    print(f"StartFreq={BH.start_freq_ghz:.3f} GHz  BW={BH.bandwidth_ghz:.3f} GHz  "
-          f"Fs={BH.sample_rate_ksps:.1f} ksps")
-    print(f"FramePeriod={BH.frame_period_ms:.3f} ms")
+    print(f"Velocity: {BH.velocity_min_mps:.2f} to {BH.velocity_max_mps:.2f} m/s")
+    print(f"  FFT bin spacing: {BH.velocity_resolution_mps:.4f} m/s")
+    print(f"  Physical resolution: {BH.physical_velocity_resolution_mps:.4f} m/s")
     
     print("\n-- Processing Parameters --")
     print(f"FFT sizes: Range={BH.nfft_range}, Doppler={BH.nfft_doppler}")
-    print(f"Original dimensions: Samples={BH.n_samples_original}, Chirps={BH.n_chirps_original}")
     print(f"Window types: Range={_map_window_type(BH.range_window_type)}, "
           f"Doppler={_map_window_type(BH.doppler_window_type)}")
     print(f"FFT shifts: Range={'Yes' if BH.fftshift_range else 'No'}, "
           f"Doppler={'Yes' if BH.fftshift_doppler else 'No'}")
     print(f"Half spectrum: {'Yes' if BH.range_half_spectrum else 'No'}")
-    print(f"Accumulated frames: {BH.n_accumulated_frames}")
+    print(f"Integration time: {BH.integration_time_ms:.3f} ms")
+    
+    # Show channel order if not all zeros
+    if np.any(BH.channel_order != 0):
+        print(f"\n-- Channel Order --")
+        non_zero_channels = BH.channel_order[BH.channel_order != 0]
+        if len(non_zero_channels) > 0:
+            print(f"Channel sequence: {list(non_zero_channels)}")
+        else:
+            print(f"Channel sequence: {list(BH.channel_order[:min(8, len(BH.channel_order))])}...")
 
 
 # ==============================
@@ -465,13 +468,13 @@ def get_processing_info(headers: Dict[str, Any]) -> Dict[str, Any]:
     return {
         'nfft_range': BH.nfft_range,
         'nfft_doppler': BH.nfft_doppler,
-        'n_samples_original': BH.n_samples_original,
-        'n_chirps_original': BH.n_chirps_original,
         'range_window': _map_window_type(BH.range_window_type),
         'doppler_window': _map_window_type(BH.doppler_window_type),
         'fftshift_range': bool(BH.fftshift_range),
         'fftshift_doppler': bool(BH.fftshift_doppler),
         'range_half_spectrum': bool(BH.range_half_spectrum),
-        'n_accumulated_frames': BH.n_accumulated_frames,
+        'integration_time_ms': BH.integration_time_ms,
+        'physical_velocity_resolution_mps': BH.physical_velocity_resolution_mps,
+        'channel_order': BH.channel_order,
     }
 
