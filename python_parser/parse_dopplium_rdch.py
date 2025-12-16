@@ -11,8 +11,9 @@ Updated Format Notes:
 - Data stored in Fortran-order (column-major) with range varying fastest
 - Removed fields: start_freq_ghz, bandwidth_ghz, sample_rate_ksps, frame_period_ms,
   n_samples_original, n_chirps_original, n_accumulated_frames
-- Added fields: physical_velocity_resolution_mps, integration_time_ms, channel_order
-- Body header: 100 bytes used, 156 bytes reserved (256 total)
+- Added fields: physical_velocity_resolution_mps, integration_time_ms, channel_order,
+  physical_range_resolution_m, is_db_scale, data_format
+- Body header: 106 bytes used, 150 bytes reserved (256 total)
 """
 
 from __future__ import annotations
@@ -46,12 +47,12 @@ class RDChBodyHeader:
     # Range parameters
     range_min_m: float
     range_max_m: float
-    range_resolution_m: float
+    range_resolution_m: float  # FFT bin spacing
     # Velocity parameters
     velocity_min_mps: float
     velocity_max_mps: float
-    velocity_resolution_mps: float
-    physical_velocity_resolution_mps: float
+    velocity_resolution_mps: float  # FFT bin spacing
+    physical_velocity_resolution_mps: float  # Integration time-determined
     # Data type
     data_type: int  # 0=complex64, 1=complex128, 2=float32, 3=float64, 4=int16, 5=int32
     # Processing parameters
@@ -65,6 +66,10 @@ class RDChBodyHeader:
     integration_time_ms: float
     # Channel order
     channel_order: np.ndarray  # 30 int8 values
+    # Additional resolution and scale parameters
+    physical_range_resolution_m: float  # Bandwidth-determined
+    is_db_scale: int  # 0=linear, 1=dB
+    data_format: int  # 0=complex, 1=amplitude, 2=power
     _reserved3: bytes
 
 
@@ -282,7 +287,10 @@ def _read_rdch_body_header(f: io.BufferedReader, ep: str) -> RDChBodyHeader:
         "B"    # range_half_spectrum
         "f"    # integration_time_ms
         "30b"  # channel_order (30 × int8)
-        "156s" # reserved3
+        "f"    # physical_range_resolution_m
+        "B"    # is_db_scale
+        "B"    # data_format
+        "150s" # reserved3
     )
     size = struct.calcsize(fmt)
     raw = f.read(size)
@@ -320,7 +328,10 @@ def _read_rdch_body_header(f: io.BufferedReader, ep: str) -> RDChBodyHeader:
         range_half_spectrum=unpacked[22],
         integration_time_ms=unpacked[23],
         channel_order=channel_order,
-        _reserved3=unpacked[54],
+        physical_range_resolution_m=unpacked[54],
+        is_db_scale=unpacked[55],
+        data_format=unpacked[56],
+        _reserved3=unpacked[57],
     )
 
 
@@ -373,6 +384,16 @@ def _map_window_type(window_code: int) -> str:
     return window_map.get(window_code, 'unknown')
 
 
+def _map_data_format(format_code: int) -> str:
+    """Map data format code to string."""
+    format_map = {
+        0: 'complex',
+        1: 'amplitude',
+        2: 'power'
+    }
+    return format_map.get(format_code, 'unknown')
+
+
 def _print_header_summary(FH: FileHeader, BH: RDChBodyHeader) -> None:
     """Print summary of file and body headers."""
     print("--- Dopplium RDCh Data ---")
@@ -387,11 +408,14 @@ def _print_header_summary(FH: FileHeader, BH: RDChBodyHeader) -> None:
                 if BH.data_type < 6 else 'unknown'
     print(f"Dimensions: Range={BH.n_range_bins}, Doppler={BH.n_doppler_bins}, Channels={BH.n_channels}")
     print(f"Data type: {dtype_str}")
+    print(f"Data format: {_map_data_format(BH.data_format)}")
+    print(f"Scale: {'dB' if BH.is_db_scale else 'linear'}")
     print(f"Storage order: Fortran (column-major, range varies fastest)")
     
     print("\n-- Range/Velocity Axes --")
-    print(f"Range: {BH.range_min_m:.2f} to {BH.range_max_m:.2f} m, "
-          f"resolution={BH.range_resolution_m:.3f} m")
+    print(f"Range: {BH.range_min_m:.2f} to {BH.range_max_m:.2f} m")
+    print(f"  FFT bin spacing: {BH.range_resolution_m:.4f} m")
+    print(f"  Physical resolution: {BH.physical_range_resolution_m:.4f} m")
     print(f"Velocity: {BH.velocity_min_mps:.2f} to {BH.velocity_max_mps:.2f} m/s")
     print(f"  FFT bin spacing: {BH.velocity_resolution_mps:.4f} m/s")
     print(f"  Physical resolution: {BH.physical_velocity_resolution_mps:.4f} m/s")
@@ -478,6 +502,9 @@ def get_processing_info(headers: Dict[str, Any]) -> Dict[str, Any]:
         'range_half_spectrum': bool(BH.range_half_spectrum),
         'integration_time_ms': BH.integration_time_ms,
         'physical_velocity_resolution_mps': BH.physical_velocity_resolution_mps,
+        'physical_range_resolution_m': BH.physical_range_resolution_m,
+        'is_db_scale': bool(BH.is_db_scale),
+        'data_format': _map_data_format(BH.data_format),
         'channel_order': BH.channel_order,
     }
 
