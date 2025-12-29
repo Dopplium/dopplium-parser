@@ -230,7 +230,7 @@ def parse_dopplium_radarcube(
                     data[:, :, :, :, cpis_read] = cpi_data
                 except ValueError as e:
                     raise ValueError(f"CPI {cpis_read}: Cannot reshape payload. "
-                                   f"Expected {n_range}×{n_doppler}×{n_azimuth}×{n_elevation} = "
+                                   f"Expected {n_range}x{n_doppler}x{n_azimuth}x{n_elevation} = "
                                    f"{n_range * n_doppler * n_azimuth * n_elevation} elements, "
                                    f"got {cpi_data.size}. Error: {e}")
                 

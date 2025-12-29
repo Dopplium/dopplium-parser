@@ -24,9 +24,9 @@ data, headers = parse_dopplium('file.bin', verbose=True)
 ```
 
 The dispatcher automatically detects the message type and routes to the appropriate parser:
-- **message_type = 1**: ADCData (raw radar data) → `parse_dopplium_raw`
-- **message_type = 2**: RDCMaps (Range-Doppler-Channel) → `parse_dopplium_rdch`
-- **message_type = 3**: RadarCube (Range-Doppler-Azimuth-Elevation) → `parse_dopplium_radarcube`
+- **message_type = 1**: ADCData (raw radar data) calls `parse_dopplium_raw`
+- **message_type = 2**: RDCMaps (Range-Doppler-Channel) calls `parse_dopplium_rdch`
+- **message_type = 3**: RadarCube (Range-Doppler-Azimuth-Elevation) calls `parse_dopplium_radarcube`
 
 **Full Message Type List (Parser Version 3):**
 - 0: Unknown (unsupported)
