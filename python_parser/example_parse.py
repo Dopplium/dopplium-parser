@@ -15,12 +15,15 @@ def main():
         verbose=True
     )
     
-    # Verify this is RawData format (message_type = 3)
-    if hdr['file'].message_type != 3:
+    # Verify this is RawData/ADCData format
+    # Version 2: message_type = 3 (RawData)
+    # Version 3: message_type = 1 (ADCData)
+    expected_msg_type = 3 if hdr['file'].version == 2 else 1
+    if hdr['file'].message_type != expected_msg_type:
         raise ValueError(
-            f"This example requires RawData format (message_type=3), "
+            f"This example requires ADCData format (message_type={expected_msg_type} for version {hdr['file'].version}), "
             f"but got message_type={hdr['file'].message_type}. "
-            f"For RDCh data (message_type=5), use a different example."
+            f"For RDCMaps data (message_type=2), use a different example."
         )
     
     # data shape: [samples, chirpsPerTx, channels, frames]

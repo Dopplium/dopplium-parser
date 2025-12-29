@@ -124,8 +124,13 @@ def parse_dopplium_raw(
             # Skip the file header
             f.seek(FH.file_header_size, io.SEEK_SET)
         
-        if FH.message_type != 3:
-            raise ValueError("This file is not RawData (message_type != 3).")
+        # Check message type based on version
+        # Version 2: message_type = 3 (RawData)
+        # Version 3: message_type = 1 (ADCData)
+        if FH.version == 2 and FH.message_type != 3:
+            raise ValueError(f"This file is not RawData (message_type={FH.message_type}, expected 3 for version 2).")
+        elif FH.version == 3 and FH.message_type != 1:
+            raise ValueError(f"This file is not ADCData (message_type={FH.message_type}, expected 1 for version 3).")
         
         # Position at body header if we parsed the file header ourselves
         if _file_header is None:

@@ -24,8 +24,18 @@ data, headers = parse_dopplium('file.bin', verbose=True)
 ```
 
 The dispatcher automatically detects the message type and routes to the appropriate parser:
-- **message_type = 3**: RawData → `parse_dopplium_raw`
-- **message_type = 5**: RDCh (Range-Doppler-Channel) → `parse_dopplium_rdch`
+- **message_type = 1**: ADCData (raw radar data) → `parse_dopplium_raw`
+- **message_type = 2**: RDCMaps (Range-Doppler-Channel) → `parse_dopplium_rdch`
+- **message_type = 3**: RadarCube (Range-Doppler-Azimuth-Elevation) → `parse_dopplium_radarcube`
+
+**Full Message Type List (Parser Version 3):**
+- 0: Unknown (unsupported)
+- 1: ADCData
+- 2: RDCMaps
+- 3: RadarCube
+- 4: Detections (not yet implemented)
+- 5: Blobs (not yet implemented)
+- 6: Tracks (not yet implemented)
 
 ### Direct Parser Calls
 
@@ -41,6 +51,16 @@ data, headers = parse_dopplium_raw('raw_file.bin')
 ```python
 from python_parser import parse_dopplium_rdch
 data, headers = parse_dopplium_rdch('rdch_file.bin')
+```
+
+**Python - RadarCube**:
+```python
+from python_parser import parse_dopplium_radarcube, get_azimuth_axis, get_elevation_axis
+data, headers = parse_dopplium_radarcube('radarcube_file.bin')
+
+# Get angular axes
+azimuth_axis = get_azimuth_axis(headers)
+elevation_axis = get_elevation_axis(headers)
 ```
 
 **MATLAB**:
@@ -63,6 +83,15 @@ Returns data shaped `[range_bins, doppler_bins, channels, cpis]`:
 - **Doppler bins**: Processed velocity/Doppler dimension
 - **Channels**: Number of receiver channels
 - **CPIs**: Number of Coherent Processing Intervals
+
+### RadarCube Format
+Returns data shaped `[range_bins, doppler_bins, azimuth_bins, elevation_bins, cpis]`:
+- **Range bins**: Processed range dimension
+- **Doppler bins**: Processed velocity/Doppler dimension
+- **Azimuth bins**: Angular resolution in azimuth (horizontal)
+- **Elevation bins**: Angular resolution in elevation (vertical)
+- **CPIs**: Number of Coherent Processing Intervals
+- **Algorithms**: Supports FFT, CAPON, MUSIC for angle estimation
 
 ## Options
 

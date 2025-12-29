@@ -47,6 +47,7 @@ def parse_dopplium(
     - Version 2, message_type 3: RawData/ADC -> parse_dopplium_raw
     - Version 3, message_type 1: ADCData -> parse_dopplium_raw
     - Version 3, message_type 2: RDCMaps/RDCh -> parse_dopplium_rdch
+    - Version 3, message_type 3: RadarCube -> parse_dopplium_radarcube
     
     Parameters:
     -----------
@@ -143,7 +144,15 @@ def parse_dopplium(
                 _endian_prefix=endian_prefix
             )
         elif msg_type == 3:
-            raise NotImplementedError("Version 3 RadarCube (message_type=3) not yet implemented.")
+            # RadarCube
+            from .parse_dopplium_radarcube import parse_dopplium_radarcube
+            return parse_dopplium_radarcube(
+                filename,
+                max_cpis=max_cpis_or_frames,
+                verbose=verbose,
+                _file_header=file_header,
+                _endian_prefix=endian_prefix
+            )
         elif msg_type == 4:
             raise NotImplementedError("Version 3 Detections (message_type=4) not yet implemented.")
         elif msg_type == 5:
