@@ -43,18 +43,30 @@ from .parse_dopplium_tracks import (
     cartesian_to_spherical,
     spherical_to_cartesian,
     get_track_statistics,
-    get_blob_statistics,
+    get_blob_statistics as get_track_blob_statistics,
     get_track_lifecycle_stats,
+)
+from .parse_dopplium_blobs import (
+    parse_dopplium_blobs,
+    BlobsBodyHeader,
+    BlobsBatchHeader,
+    filter_blobs_by_range,
+    filter_blobs_by_velocity,
+    filter_blobs_by_amplitude,
+    filter_blobs_by_size,
+    filter_blobs_by_detection_count,
+    get_blob_statistics,
 )
 from .parse_dopplium_header import FileHeader
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 __all__ = [
     "parse_dopplium",
     "parse_dopplium_raw",
     "parse_dopplium_rdch",
     "parse_dopplium_radarcube",
     "parse_dopplium_detections",
+    "parse_dopplium_blobs",
     "parse_dopplium_tracks",
     "FileHeader",
     "BodyHeader",
@@ -64,6 +76,8 @@ __all__ = [
     "CPIHeader",
     "DetectionsBodyHeader",
     "DetectionsBatchHeader",
+    "BlobsBodyHeader",
+    "BlobsBatchHeader",
     "TracksBodyHeader",
     "TracksFrameHeader",
     "get_range_axis",
@@ -77,6 +91,12 @@ __all__ = [
     "filter_detections_by_velocity",
     "filter_detections_by_amplitude",
     "get_detection_statistics",
+    "filter_blobs_by_range",
+    "filter_blobs_by_velocity",
+    "filter_blobs_by_amplitude",
+    "filter_blobs_by_size",
+    "filter_blobs_by_detection_count",
+    "get_blob_statistics",
     "filter_tracks_by_status",
     "filter_tracks_by_class",
     "filter_tracks_by_id",
@@ -85,7 +105,7 @@ __all__ = [
     "cartesian_to_spherical",
     "spherical_to_cartesian",
     "get_track_statistics",
-    "get_blob_statistics",
+    "get_track_blob_statistics",
     "get_track_lifecycle_stats",
 ]
 

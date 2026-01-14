@@ -15,7 +15,7 @@ Supported message types:
     2 - RDCMaps/RDCh (supported)
     3 - RadarCube (supported)
     4 - Detections (supported)
-    5 - Blobs (not yet implemented)
+    5 - Blobs (supported)
     6 - Tracks (supported)
 """
 
@@ -49,6 +49,7 @@ def parse_dopplium(
     - Version 3, message_type 2: RDCMaps/RDCh -> parse_dopplium_rdch
     - Version 3, message_type 3: RadarCube -> parse_dopplium_radarcube
     - Version 3, message_type 4: Detections -> parse_dopplium_detections
+    - Version 3, message_type 5: Blobs -> parse_dopplium_blobs
     - Version 3, message_type 6: Tracks -> parse_dopplium_tracks
     
     Parameters:
@@ -168,7 +169,17 @@ def parse_dopplium(
                 _endian_prefix=endian_prefix
             )
         elif msg_type == 5:
-            raise NotImplementedError("Version 3 Blobs (message_type=5) not yet implemented.")
+            # Blobs
+            if verbose:
+                print("Routing to Blobs parser...")
+            from .parse_dopplium_blobs import parse_dopplium_blobs
+            return parse_dopplium_blobs(
+                filename,
+                max_batches=max_cpis_or_frames,
+                verbose=verbose,
+                _file_header=file_header,
+                _endian_prefix=endian_prefix
+            )
         elif msg_type == 6:
             # Tracks
             if verbose:
@@ -195,6 +206,7 @@ __all__ = [
     'parse_dopplium_rdch',
     'parse_dopplium_radarcube',
     'parse_dopplium_detections',
+    'parse_dopplium_blobs',
     'parse_dopplium_tracks',
 ]
 
