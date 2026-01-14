@@ -4,7 +4,7 @@ Binary data parsers for Dopplium radar data formats, implemented in Python using
 
 ## Overview
 
-This package provides five binary parsers for different radar data formats:
+This package provides six binary parsers for different radar data formats:
 
 | Parser | Format | Message Type | Data Shape | Use Case |
 |--------|--------|--------------|------------|----------|
@@ -12,6 +12,7 @@ This package provides five binary parsers for different radar data formats:
 | **parse_dopplium_rdch** | RDCMaps (RDCh) | 2 | [range, doppler, channels, cpis] | Range-Doppler-Channel processed data |
 | **parse_dopplium_radarcube** | RadarCube | 3 | [range, doppler, azimuth, elevation, cpis] | Full 4D radar cubes with angles |
 | **parse_dopplium_detections** | Detections | 4 | Structured array of detections | Processed target detections |
+| **parse_dopplium_blobs** | Blobs | 5 | Structured array of blobs | Clustered detections with centroids/spreads |
 | **parse_dopplium_tracks** | Tracks | 6 | Structured array of tracks | Tracked targets with state estimation |
 
 All parsers support automatic format detection via the main `parse_dopplium()` dispatcher.
@@ -53,6 +54,7 @@ from python_parser import (
     parse_dopplium_rdch,
     parse_dopplium_radarcube,
     parse_dopplium_detections,
+    parse_dopplium_blobs,
     parse_dopplium_tracks
 )
 
@@ -61,6 +63,8 @@ raw_data, headers = parse_dopplium_raw("raw.bin")
 rdch_data, headers = parse_dopplium_rdch("rdch.bin")
 cube_data, headers = parse_dopplium_radarcube("radarcube.bin")
 detections, headers = parse_dopplium_detections("detections.bin")
+blobs, headers = parse_dopplium_blobs("blobs.bin")
+tracks, headers = parse_dopplium_tracks("tracks.bin")
 ```
 
 ## Parser Details
@@ -298,6 +302,107 @@ for batch_idx in np.unique(detections['batch_index']):
 
 **Common Use Case:** Target tracking, visualization, data export
 
+### 5. parse_dopplium_blobs - Clustered Detections
+
+For clustered detection data (blobs) with centroid positions and spatial spreads.
+
+```python
+from python_parser import (
+    parse_dopplium_blobs,
+    filter_blobs_by_range,
+    filter_blobs_by_velocity,
+    filter_blobs_by_amplitude,
+    filter_blobs_by_size,
+    filter_blobs_by_detection_count,
+    get_blob_statistics
+)
+
+# Parse blobs file
+blobs, headers = parse_dopplium_blobs(
+    "blobs.bin",
+    max_batches=None,  # Read all batches
+    verbose=True
+)
+
+# Blobs is a numpy structured array
+print(f"Total blobs: {len(blobs)}")
+print(f"Fields: {list(blobs.dtype.names)}")
+
+# Access blob fields - Centroids
+ranges = blobs['range_centroid']          # meters
+velocities = blobs['velocity_centroid']   # m/s
+azimuths = blobs['azimuth_centroid']      # degrees
+elevations = blobs['elevation_centroid']  # degrees
+
+# Access blob fields - Spreads
+range_spread = blobs['range_spread']      # meters
+velocity_spread = blobs['velocity_spread'] # m/s
+azimuth_spread = blobs['azimuth_spread']  # degrees
+elevation_spread = blobs['elevation_spread'] # degrees
+
+# Amplitude and identity
+amplitudes = blobs['amplitude']
+blob_ids = blobs['blob_id']
+num_detections = blobs['num_detections']
+
+# Cell indices (link back to radar cube)
+range_cells = blobs['range_cell']
+doppler_cells = blobs['doppler_cell']
+
+# Filter blobs
+close_blobs = filter_blobs_by_range(blobs, 0.0, 50.0)
+moving_blobs = filter_blobs_by_velocity(blobs, -50.0, -1.0)
+strong_blobs = filter_blobs_by_amplitude(blobs, 30.0)
+
+# Filter by size (spread)
+small_blobs = filter_blobs_by_size(blobs, max_range_spread=2.0)
+large_clusters = filter_blobs_by_size(blobs, min_range_spread=5.0)
+
+# Filter by detection count
+dense_blobs = filter_blobs_by_detection_count(blobs, min_detections=10)
+
+# Get statistics
+stats = get_blob_statistics(blobs)
+print(f"Range: {stats['range_centroid']['min']:.2f} to {stats['range_centroid']['max']:.2f} m")
+print(f"Velocity: mean={stats['velocity_centroid']['mean']:.2f} m/s")
+print(f"Total detections in blobs: {stats['num_detections']['total']}")
+print(f"Batches: {stats['batches']['unique_batches']}")
+
+# Group by batch
+for batch_idx in np.unique(blobs['batch_index']):
+    batch_blobs = blobs[blobs['batch_index'] == batch_idx]
+    print(f"Batch {batch_idx}: {len(batch_blobs)} blobs")
+```
+
+**Blob Record Fields:**
+- `range_centroid` (float32): Centroid range in meters
+- `velocity_centroid` (float32): Centroid velocity in m/s
+- `azimuth_centroid` (float32): Centroid azimuth in degrees
+- `elevation_centroid` (float32): Centroid elevation in degrees
+- `range_spread` (float32): Range extent in meters
+- `velocity_spread` (float32): Velocity extent in m/s
+- `azimuth_spread` (float32): Azimuth extent in degrees
+- `elevation_spread` (float32): Elevation extent in degrees
+- `amplitude` (float32): Aggregate amplitude
+- `range_cell` (int16): Range bin index
+- `doppler_cell` (int16): Doppler bin index
+- `azimuth_cell` (int16): Azimuth bin index
+- `elevation_cell` (int16): Elevation bin index
+- `blob_id` (uint32): Unique blob identifier within batch
+- `num_detections` (uint16): Number of detections in this blob
+- `batch_index` (uint32): Which batch this blob belongs to
+- `sequence_number` (uint32): Sequence number of the batch
+
+**Key Features:**
+- Structured numpy arrays for efficient access
+- Built-in filtering functions (range, velocity, amplitude, size, detection count)
+- Statistics calculation
+- Batch organization (blobs grouped by time)
+- Cell indices link back to radar cube
+- Processing pipeline: Detections → Clustering → **Blobs** → Tracking → Tracks
+
+**Common Use Case:** Input to tracking algorithms, cluster analysis, visualization
+
 ## Example Scripts
 
 Each parser has example code:
@@ -305,6 +410,8 @@ Each parser has example code:
 ```bash
 python example_parse.py               # Raw/RDCh/RadarCube examples
 python example_parse_detections.py    # Detections with visualization
+python example_parse_blobs.py         # Blobs with filtering and statistics
+python example_parse_tracks.py        # Tracks with trajectory analysis
 ```
 
 ## Common Features
@@ -354,8 +461,8 @@ for i, cpi_header in enumerate(headers['cpi'][:5]):  # or 'frame', 'batch'
 | 2 | Tracks | RDCMaps (RDCh) | `parse_dopplium_rdch` |
 | 3 | RawData/ADC | RadarCube | `parse_dopplium_raw` / `parse_dopplium_radarcube` |
 | 4 | Aggregated | Detections | `parse_dopplium_detections` |
-| 5 | - | Blobs | Not yet implemented |
-| 6 | - | Tracks | Not yet implemented |
+| 5 | - | Blobs | `parse_dopplium_blobs` |
+| 6 | - | Tracks | `parse_dopplium_tracks` |
 
 ## Helper Functions
 
@@ -408,6 +515,33 @@ filtered = filter_detections_by_amplitude(detections, min_amplitude)
 
 # Get statistics
 stats = get_detection_statistics(detections)
+```
+
+### For Blobs
+
+```python
+from python_parser import (
+    filter_blobs_by_range,
+    filter_blobs_by_velocity,
+    filter_blobs_by_amplitude,
+    filter_blobs_by_size,
+    filter_blobs_by_detection_count,
+    get_blob_statistics
+)
+
+# Filter blobs by position
+filtered = filter_blobs_by_range(blobs, min_range, max_range)
+filtered = filter_blobs_by_velocity(blobs, min_vel, max_vel)
+filtered = filter_blobs_by_amplitude(blobs, min_amplitude)
+
+# Filter by cluster size
+filtered = filter_blobs_by_size(blobs, min_range_spread=1.0, max_range_spread=10.0)
+
+# Filter by detection count
+filtered = filter_blobs_by_detection_count(blobs, min_detections=5)
+
+# Get statistics
+stats = get_blob_statistics(blobs)
 ```
 
 ## Advanced Usage
@@ -475,6 +609,12 @@ raw_data, headers = parse_dopplium_raw(
 # Read limited detections
 detections, headers = parse_dopplium_detections(
     "detections.bin",
+    max_batches=100
+)
+
+# Read limited blobs
+blobs, headers = parse_dopplium_blobs(
+    "blobs.bin",
     max_batches=100
 )
 
