@@ -4,7 +4,7 @@ Binary data parsers for Dopplium radar data formats, implemented in Python using
 
 ## Overview
 
-This package provides four binary parsers for different radar data formats:
+This package provides five binary parsers for different radar data formats:
 
 | Parser | Format | Message Type | Data Shape | Use Case |
 |--------|--------|--------------|------------|----------|
@@ -12,6 +12,7 @@ This package provides four binary parsers for different radar data formats:
 | **parse_dopplium_rdch** | RDCMaps (RDCh) | 2 | [range, doppler, channels, cpis] | Range-Doppler-Channel processed data |
 | **parse_dopplium_radarcube** | RadarCube | 3 | [range, doppler, azimuth, elevation, cpis] | Full 4D radar cubes with angles |
 | **parse_dopplium_detections** | Detections | 4 | Structured array of detections | Processed target detections |
+| **parse_dopplium_tracks** | Tracks | 6 | Structured array of tracks | Tracked targets with state estimation |
 
 All parsers support automatic format detection via the main `parse_dopplium()` dispatcher.
 
@@ -51,7 +52,8 @@ from python_parser import (
     parse_dopplium_raw,
     parse_dopplium_rdch,
     parse_dopplium_radarcube,
-    parse_dopplium_detections
+    parse_dopplium_detections,
+    parse_dopplium_tracks
 )
 
 # Parse specific formats
@@ -475,7 +477,153 @@ detections, headers = parse_dopplium_detections(
     "detections.bin",
     max_batches=100
 )
+
+# Read tracks with limited frames
+tracks, headers = parse_dopplium_tracks(
+    "tracks.bin",
+    max_frames=50
+)
 ```
+
+## Tracks Parser
+
+Parse tracking data with complete state estimation including position, velocity, and uncertainty.
+
+### Key Features
+
+- **Frame-centric organization**: Tracks organized by time frame, not track ID
+- **Multiple coordinate systems**: Sensor Cartesian and ENU coordinates
+- **Lifecycle tracking**: Birth time, lifetime, gap count for each track
+- **Blob metadata**: Information about originating detection clusters
+- **Uncertainty quantification**: Standard deviations for all state estimates
+- **Invalid data handling**: `-1.0` sentinel for unavailable coordinates
+
+### Basic Usage
+
+```python
+from python_parser import parse_dopplium_tracks
+
+# Parse tracks file
+tracks, headers = parse_dopplium_tracks("tracks.bin", verbose=True)
+
+# tracks is a structured numpy array with these fields:
+# - track_id, sequence_number, status, target_class_id
+# - cart_x, cart_y, cart_z, cart_vx, cart_vy, cart_vz (+ std devs)
+# - enu_east, enu_north, enu_up, enu_ve, enu_vn, enu_vu (+ std devs)
+# - blob_size_range, blob_size_azimuth, blob_size_elevation, blob_size_doppler
+# - amplitude_db, snr_db, confidence_score
+# - track_lifetime_seconds, birth_timestamp_utc_ticks, gap_count
+
+print(f"Total track records: {len(tracks)}")
+print(f"Unique tracks: {len(np.unique(tracks['track_id']))}")
+```
+
+### Filtering Tracks
+
+```python
+from python_parser import (
+    filter_tracks_by_status,
+    filter_tracks_by_id,
+    filter_tracks_by_lifetime,
+    filter_tracks_by_class,
+    get_valid_coordinates
+)
+
+# Filter by status
+confirmed = filter_tracks_by_status(tracks, status=1)  # 0=tentative, 1=confirmed, 2=coasting
+print(f"Confirmed tracks: {len(confirmed)}")
+
+# Get specific track's trajectory
+track_101 = filter_tracks_by_id(tracks, track_id=101)
+print(f"Track 101 trajectory: {len(track_101)} frames")
+
+# Filter by lifetime
+long_tracks = filter_tracks_by_lifetime(tracks, min_lifetime=2.0)
+print(f"Tracks > 2s: {len(long_tracks)}")
+
+# Get tracks with valid coordinates
+valid_cart = get_valid_coordinates(tracks, 'cartesian')
+valid_enu = get_valid_coordinates(tracks, 'enu')
+```
+
+### Coordinate Conversions
+
+```python
+from python_parser import cartesian_to_spherical, spherical_to_cartesian
+
+# Convert Cartesian to spherical (RAE)
+for track in tracks:
+    if track['cart_x'] != -1.0:  # Check if valid
+        range_m, azimuth_deg, elevation_deg = cartesian_to_spherical(
+            track['cart_x'], track['cart_y'], track['cart_z']
+        )
+        print(f"Track {track['track_id']}: {range_m:.1f}m at {azimuth_deg:.1f}° az")
+
+# Convert back to Cartesian
+x, y, z = spherical_to_cartesian(50.0, 10.0, 5.0)  # range, azimuth, elevation
+```
+
+### Track Statistics
+
+```python
+from python_parser import (
+    get_track_statistics,
+    get_blob_statistics,
+    get_track_lifecycle_stats
+)
+
+# Overall statistics
+stats = get_track_statistics(tracks)
+print(f"Status distribution: {stats['status_distribution']}")
+print(f"Mean lifetime: {stats['lifetime']['mean']:.2f} s")
+print(f"Valid Cartesian: {stats['valid_coordinates']['cartesian']}")
+
+# Blob statistics
+blob_stats = get_blob_statistics(tracks)
+print(f"Mean detections per blob: {blob_stats['detections_per_blob']['mean']:.1f}")
+
+# Lifecycle statistics per unique track
+lifecycle = get_track_lifecycle_stats(tracks)
+print(f"Mean gaps per track: {lifecycle['gaps_per_track']['mean']:.2f}")
+```
+
+### Extract Track Trajectories
+
+```python
+# Get all unique track IDs
+unique_ids = np.unique(tracks['track_id'])
+
+# Extract and analyze each track
+for tid in unique_ids:
+    traj = filter_tracks_by_id(tracks, tid)
+    
+    # Sort by frame for temporal order
+    traj = traj[np.argsort(traj['frame_index'])]
+    
+    # Analyze trajectory
+    lifetime = traj[-1]['track_lifetime_seconds']
+    frames = len(traj)
+    gaps = traj[-1]['gap_count']
+    
+    print(f"Track {tid}: {lifetime:.2f}s, {frames} frames, {gaps} gaps")
+    
+    # Plot position over time
+    if traj[0]['cart_x'] != -1.0:
+        positions = np.array([(t['cart_x'], t['cart_y'], t['cart_z']) for t in traj])
+        # ... plotting code ...
+```
+
+### Coordinate System Notes
+
+**Sensor Cartesian System:**
+- x-axis: 0° azimuth, 0° elevation (forward)
+- y-axis: 90° elevation (straight up)
+- z-axis: Completes right-handed system (azimuth sweep)
+
+**Invalid Data:**
+- Use value `-1.0` to indicate unavailable coordinates
+- Check before using: `if track['cart_x'] != -1.0:`
+- Precision (std dev) fields may also be `-1.0` or `0.0`
 
 ## Data Types
 

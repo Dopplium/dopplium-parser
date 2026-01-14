@@ -31,15 +31,31 @@ from .parse_dopplium_detections import (
     filter_detections_by_amplitude,
     get_detection_statistics,
 )
+from .parse_dopplium_tracks import (
+    parse_dopplium_tracks,
+    TracksBodyHeader,
+    TracksFrameHeader,
+    filter_tracks_by_status,
+    filter_tracks_by_class,
+    filter_tracks_by_id,
+    filter_tracks_by_lifetime,
+    get_valid_coordinates,
+    cartesian_to_spherical,
+    spherical_to_cartesian,
+    get_track_statistics,
+    get_blob_statistics,
+    get_track_lifecycle_stats,
+)
 from .parse_dopplium_header import FileHeader
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __all__ = [
     "parse_dopplium",
     "parse_dopplium_raw",
     "parse_dopplium_rdch",
     "parse_dopplium_radarcube",
     "parse_dopplium_detections",
+    "parse_dopplium_tracks",
     "FileHeader",
     "BodyHeader",
     "FrameHeader",
@@ -48,6 +64,8 @@ __all__ = [
     "CPIHeader",
     "DetectionsBodyHeader",
     "DetectionsBatchHeader",
+    "TracksBodyHeader",
+    "TracksFrameHeader",
     "get_range_axis",
     "get_velocity_axis",
     "get_azimuth_axis",
@@ -59,5 +77,15 @@ __all__ = [
     "filter_detections_by_velocity",
     "filter_detections_by_amplitude",
     "get_detection_statistics",
+    "filter_tracks_by_status",
+    "filter_tracks_by_class",
+    "filter_tracks_by_id",
+    "filter_tracks_by_lifetime",
+    "get_valid_coordinates",
+    "cartesian_to_spherical",
+    "spherical_to_cartesian",
+    "get_track_statistics",
+    "get_blob_statistics",
+    "get_track_lifecycle_stats",
 ]
 

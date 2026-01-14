@@ -16,7 +16,7 @@ Supported message types:
     3 - RadarCube (supported)
     4 - Detections (supported)
     5 - Blobs (not yet implemented)
-    6 - Tracks (not yet implemented)
+    6 - Tracks (supported)
 """
 
 from __future__ import annotations
@@ -49,6 +49,7 @@ def parse_dopplium(
     - Version 3, message_type 2: RDCMaps/RDCh -> parse_dopplium_rdch
     - Version 3, message_type 3: RadarCube -> parse_dopplium_radarcube
     - Version 3, message_type 4: Detections -> parse_dopplium_detections
+    - Version 3, message_type 6: Tracks -> parse_dopplium_tracks
     
     Parameters:
     -----------
@@ -169,7 +170,17 @@ def parse_dopplium(
         elif msg_type == 5:
             raise NotImplementedError("Version 3 Blobs (message_type=5) not yet implemented.")
         elif msg_type == 6:
-            raise NotImplementedError("Version 3 Tracks (message_type=6) not yet implemented.")
+            # Tracks
+            if verbose:
+                print("Routing to Tracks parser...")
+            from .parse_dopplium_tracks import parse_dopplium_tracks
+            return parse_dopplium_tracks(
+                filename,
+                max_frames=max_cpis_or_frames,
+                verbose=verbose,
+                _file_header=file_header,
+                _endian_prefix=endian_prefix
+            )
         else:
             raise ValueError(f"Unsupported Version 3 message_type: {msg_type}")
     
@@ -184,5 +195,6 @@ __all__ = [
     'parse_dopplium_rdch',
     'parse_dopplium_radarcube',
     'parse_dopplium_detections',
+    'parse_dopplium_tracks',
 ]
 
