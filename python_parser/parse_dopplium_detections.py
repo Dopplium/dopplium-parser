@@ -9,7 +9,7 @@ Returns numpy structured array containing all detection fields and headers.
 
 Format Notes:
 - Body header: 64 bytes (magic "DETC")
-- Payload header: 30 bytes per batch (magic "BTCH")
+- Payload header: 32 bytes per batch (magic "BTCH")
 - Detection record: 56 bytes per detection
 - Detection records contain range, velocity, azimuth, elevation, amplitude, 
   monopulse ratios, and grid cell indices
@@ -46,7 +46,7 @@ class DetectionsBodyHeader:
 
 @dataclass
 class DetectionsBatchHeader:
-    """Detections batch/payload header (30 bytes)."""
+    """Detections batch/payload header (32 bytes)."""
     payload_magic: str
     payload_header_size: int
     timestamp_utc_ticks: int
@@ -272,8 +272,8 @@ def _read_detections_body_header(f: io.BufferedReader, ep: str) -> DetectionsBod
 
 
 def _read_batch_header(f: io.BufferedReader, ep: str) -> DetectionsBatchHeader:
-    """Read Detections batch/payload header (30 bytes)."""
-    fmt = f"{ep}4sHqHHIII"
+    """Read Detections batch/payload header (32 bytes)."""
+    fmt = f"{ep}4sHqHIIII"
     size = struct.calcsize(fmt)
     raw = f.read(size)
     if len(raw) != size:
