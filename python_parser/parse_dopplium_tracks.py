@@ -39,14 +39,15 @@ class TracksBodyHeader:
     body_header_size: int
     frame_header_size: int
     track_record_size: int
-    algorithm_id: int
-    algorithm_version: int
-    max_coast_time_ms: float
-    association_threshold: float
-    min_detection_count: float
-    process_noise_std: float
-    measurement_noise_std: float
-    _reserved: bytes
+    association_algorithm_id: int
+    association_algorithm_version: int
+    tracker_algorithm_id: int
+    tracker_algorithm_version: int
+    track_management_algorithm_id: int
+    track_management_algorithm_version: int
+    association_params: bytes
+    tracker_params: bytes
+    track_management_params: bytes
 
 
 @dataclass
@@ -239,14 +240,15 @@ def _read_tracks_body_header(f: io.BufferedReader, ep: str) -> TracksBodyHeader:
         "H"    # body_header_size
         "H"    # frame_header_size
         "H"    # track_record_size
-        "I"    # algorithm_id
-        "I"    # algorithm_version
-        "f"    # max_coast_time_ms
-        "f"    # association_threshold
-        "f"    # min_detection_count
-        "f"    # process_noise_std
-        "f"    # measurement_noise_std
-        "56s"  # reserved
+        "I"    # association_algorithm_id
+        "I"    # association_algorithm_version
+        "I"    # tracker_algorithm_id
+        "I"    # tracker_algorithm_version
+        "I"    # track_management_algorithm_id
+        "I"    # track_management_algorithm_version
+        "20s"  # association_params
+        "20s"  # tracker_params
+        "20s"  # track_management_params
     )
     size = struct.calcsize(fmt)
     raw = f.read(size)
@@ -261,14 +263,15 @@ def _read_tracks_body_header(f: io.BufferedReader, ep: str) -> TracksBodyHeader:
         body_header_size=unpacked[2],
         frame_header_size=unpacked[3],
         track_record_size=unpacked[4],
-        algorithm_id=unpacked[5],
-        algorithm_version=unpacked[6],
-        max_coast_time_ms=unpacked[7],
-        association_threshold=unpacked[8],
-        min_detection_count=unpacked[9],
-        process_noise_std=unpacked[10],
-        measurement_noise_std=unpacked[11],
-        _reserved=unpacked[12],
+        association_algorithm_id=unpacked[5],
+        association_algorithm_version=unpacked[6],
+        tracker_algorithm_id=unpacked[7],
+        tracker_algorithm_version=unpacked[8],
+        track_management_algorithm_id=unpacked[9],
+        track_management_algorithm_version=unpacked[10],
+        association_params=unpacked[11],
+        tracker_params=unpacked[12],
+        track_management_params=unpacked[13],
     )
 
 
@@ -477,13 +480,21 @@ def _print_header_summary(FH: FileHeader, BH: TracksBodyHeader) -> None:
     
     print("\n-- Tracking Configuration --")
     print(f"Track record size: {BH.track_record_size} bytes")
-    print(f"Algorithm ID: {BH.algorithm_id}")
-    print(f"Algorithm version: {BH.algorithm_version}")
-    print(f"Max coast time: {BH.max_coast_time_ms} ms")
-    print(f"Association threshold: {BH.association_threshold}")
-    print(f"Min detection count: {BH.min_detection_count}")
-    print(f"Process noise std: {BH.process_noise_std}")
-    print(f"Measurement noise std: {BH.measurement_noise_std}")
+    print(
+        f"Association algorithm: id={BH.association_algorithm_id}, "
+        f"version={BH.association_algorithm_version}"
+    )
+    print(
+        f"Tracker algorithm: id={BH.tracker_algorithm_id}, "
+        f"version={BH.tracker_algorithm_version}"
+    )
+    print(
+        f"Track management algorithm: id={BH.track_management_algorithm_id}, "
+        f"version={BH.track_management_algorithm_version}"
+    )
+    print(f"Association params length: {len(BH.association_params)} bytes")
+    print(f"Tracker params length: {len(BH.tracker_params)} bytes")
+    print(f"Track management params length: {len(BH.track_management_params)} bytes")
     print(f"Body header version: {BH.body_header_version}")
 
 
