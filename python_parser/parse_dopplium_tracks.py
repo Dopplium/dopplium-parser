@@ -376,20 +376,21 @@ def _read_track_records(
     Read track records from file.
     
     Each record is 160 bytes total:
-    - Identity & Status: 28 bytes
+    - Identity & Status: 30 bytes (includes 2-byte padding)
     - Sensor Cartesian: 48 bytes (12 float32s)
     - ENU: 48 bytes (12 float32s)
-    - Blob info: 20 bytes
+    - Blob info: 20 bytes (includes 2-byte padding)
     - Quality: 12 bytes
-    - Padding: 4 bytes
+    - Final padding: 2 bytes
     """
     # Format string for one track record
-    # Identity & Status (28 bytes): IIBBHHfqH + 2 padding
+    # Identity & Status (30 bytes): IIBBHHfqH + 2 padding
     # Cartesian (48 bytes): 12 floats
     # ENU (48 bytes): 12 floats
     # Blob (20 bytes): 4 floats + 1 uint16 + 2 padding
     # Quality (12 bytes): 3 floats
-    single_fmt = "IIBBHHfqH2x" + "f"*12 + "f"*12 + "ffffH2x" + "fff"
+    # Final record padding (2 bytes): 2x
+    single_fmt = "IIBBHHfqH2x" + "f"*12 + "f"*12 + "ffffH2x" + "fff" + "2x"
     
     fmt = f"{ep}" + single_fmt * count
     size = struct.calcsize(fmt)
@@ -402,7 +403,7 @@ def _read_track_records(
     # Create structured array
     tracks = _create_track_dtype(frame_index, sequence_number, count)
     
-    # Each track is 38 values (9 identity + 12 cart + 12 enu + 5 blob + 3 quality - padding removed)
+    # Each track has 41 unpacked values (padding bytes are omitted by struct.unpack).
     values_per_track = 9 + 12 + 12 + 5 + 3
     
     for i in range(count):
