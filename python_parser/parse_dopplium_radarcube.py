@@ -85,6 +85,7 @@ class RadarCubeBodyHeader:
     physical_range_resolution_m: float  # Bandwidth-determined
     is_db_scale: int  # 0=linear, 1=dB
     data_format: int  # 0=complex, 1=amplitude, 2=power
+    cpis_incoherently_integrated: int  # Number of CPIs summed incoherently
     _reserved3: bytes
 
 
@@ -317,7 +318,8 @@ def _read_radarcube_body_header(f: io.BufferedReader, ep: str) -> RadarCubeBodyH
         "f"    # physical_range_resolution_m
         "B"    # is_db_scale
         "B"    # data_format
-        "139s" # reserved3
+        "H"    # cpis_incoherently_integrated
+        "137s" # reserved3
     )
     size = struct.calcsize(fmt)
     raw = f.read(size)
@@ -368,7 +370,8 @@ def _read_radarcube_body_header(f: io.BufferedReader, ep: str) -> RadarCubeBodyH
         physical_range_resolution_m=unpacked[38],
         is_db_scale=unpacked[39],
         data_format=unpacked[40],
-        _reserved3=unpacked[41],
+        cpis_incoherently_integrated=unpacked[41],
+        _reserved3=unpacked[42],
     )
 
 
@@ -459,6 +462,7 @@ def _print_header_summary(FH: FileHeader, BH: RadarCubeBodyHeader) -> None:
     print(f"Data type: {dtype_str}")
     print(f"Data format: {_map_data_format(BH.data_format)}")
     print(f"Scale: {'dB' if BH.is_db_scale else 'linear'}")
+    print(f"Incoherent CPI integration: {BH.cpis_incoherently_integrated}")
     print(f"Storage order: Fortran (column-major, range varies fastest)")
     
     print("\n-- Range/Velocity Axes --")
@@ -665,6 +669,7 @@ def get_processing_info(headers: Dict[str, Any]) -> Dict[str, Any]:
         'physical_range_resolution_m': BH.physical_range_resolution_m,
         'is_db_scale': bool(BH.is_db_scale),
         'data_format': _map_data_format(BH.data_format),
+        'cpis_incoherently_integrated': BH.cpis_incoherently_integrated,
         'angle_estimation_algorithm': _map_angle_algorithm(BH.angle_estimation_algorithm),
         'uses_fft_for_angles': uses_fft_for_angles(headers),
         'has_known_angles': has_known_angles(headers),

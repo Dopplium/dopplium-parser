@@ -192,6 +192,9 @@ else:
     algo_map = {1: 'CAPON', 2: 'MUSIC', 3: 'other'}
     print(f"Using {algo_map.get(algo, 'unknown')} angle estimation")
 
+# Incoherent integration metadata (1 means no incoherent CPI summing)
+print(f"Incoherent CPI integration: {headers['body'].cpis_incoherently_integrated}")
+
 # Access single CPI
 cpi_data = data[:, :, :, :, 0]  # First CPI: [range, doppler, az, el]
 ```
