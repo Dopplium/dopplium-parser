@@ -6,7 +6,7 @@ Supports:
 - Version 3, message_type 1: ADCData
 
 Returns numpy arrays shaped [samples, chirpsPerTx, channels, frames] and all headers.
-Handles both body header config_version 1 and 2, with different IQ ordering schemes.
+Handles body header config_version 1/2/3, with config_version 3 adding channel_order.
 """
 
 from __future__ import annotations
@@ -61,6 +61,7 @@ class BodyHeader:
     max_velocity_mps: float
     range_resolution_m: float
     velocity_resolution_mps: float
+    channel_order: np.ndarray
     _reserved3: bytes
 
 
@@ -277,7 +278,7 @@ def parse_dopplium_raw(
                         # COMPLEX - decode based on body header config_version
                         if BH.config_version == 1:
                             z = _decode_iq_v1(seg, S, BH.iq_order, cast, return_complex=return_complex)
-                        elif BH.config_version == 2:
+                        elif BH.config_version in (2, 3):
                             z = _decode_iq_v2(seg, S, BH.iq_order, cast, return_complex=return_complex)
                         else:
                             raise ValueError(f"Unsupported body header config_version: {BH.config_version}")
@@ -366,13 +367,28 @@ def _read_body_header(f: io.BufferedReader, ep: str) -> BodyHeader:
         "f"    # max_velocity_mps
         "f"    # range_resolution_m
         "f"    # velocity_resolution_mps
-        "52s"  # _reserved3
+        "30b"  # channel_order (int8[30]) - used in config_version 3
+        "22s"  # _reserved3 tail bytes
     )
     size = struct.calcsize(fmt)
     raw = f.read(size)
     if len(raw) != size:
         raise EOFError("Failed to read body header.")
     unpacked = struct.unpack(fmt, raw)
+    channel_order = np.array(unpacked[33:63], dtype=np.int8)
+
+    # In config versions before 3, these bytes are reserved/unknown.
+    # Keep deterministic fallback behavior by exposing a zeroed order vector.
+    if unpacked[1] < 3:
+        channel_order = np.zeros(30, dtype=np.int8)
+
+    # For config_version 3+, channel_order must be available and well-formed.
+    if unpacked[1] >= 3 and channel_order.shape != (30,):
+        raise ValueError(
+            f"Invalid channel_order in body header for config_version={unpacked[1]}: "
+            f"expected length 30, got shape {channel_order.shape}."
+        )
+
     # Map into dataclass
     return BodyHeader(
         config_magic=unpacked[0].decode("ascii"),
@@ -408,7 +424,8 @@ def _read_body_header(f: io.BufferedReader, ep: str) -> BodyHeader:
         max_velocity_mps=unpacked[30],
         range_resolution_m=unpacked[31],
         velocity_resolution_mps=unpacked[32],
-        _reserved3=unpacked[33],
+        channel_order=channel_order,
+        _reserved3=unpacked[63],
     )
 
 
