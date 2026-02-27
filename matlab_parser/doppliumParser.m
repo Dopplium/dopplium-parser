@@ -20,6 +20,14 @@ function [data, headers] = doppliumParser(filename, opts)
 %     4 - Detections (not yet implemented)
 %     5 - Blobs (not yet implemented)
 %     6 - Tracks (not yet implemented)
+%   Version 4:
+%     0 - Unknown (unsupported)
+%     1 - ADCData (currently supported)
+%     2 - RDCMaps (not yet implemented)
+%     3 - RadarCube (not yet implemented)
+%     4 - Detections (not yet implemented)
+%     5 - Blobs (not yet implemented)
+%     6 - Tracks (not yet implemented)
 %
 %   OUTPUTS
 %     data    : parsed data (format depends on message type)
@@ -78,6 +86,8 @@ switch version
         FH = readFileHeader(fid, machinefmt);
     case 3
         FH = readFileHeader(fid, machinefmt);  % V3 has same format as V2
+    case 4
+        FH = readFileHeader(fid, machinefmt);  % V4 extends file header with sensor metadata
     otherwise
         error('Unsupported file version: %d', version);
 end
@@ -106,8 +116,8 @@ switch version
                 error('Unsupported Version 2 message_type: %d', FH.message_type);
         end
 
-    case 3
-        % Version 3 message type mappings
+    case {3, 4}
+        % Version 3/4 message type mappings
         switch FH.message_type
             case 0
                 error('File has unknown message_type (0). Cannot parse.');
@@ -124,7 +134,7 @@ switch version
             case 6 % Tracks
                 [data, headers] = parseTracks(fid, FH, machinefmt, filename, opts);
             otherwise
-                error('Unsupported Version 3 message_type: %d', FH.message_type);
+                error('Unsupported Version %d message_type: %d', version, FH.message_type);
         end
 
     otherwise

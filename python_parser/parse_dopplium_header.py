@@ -2,8 +2,9 @@
 Common header parsing for Dopplium binary files.
 Handles initial file header parsing, version detection, and message type detection.
 
-Supported file versions: 2, 3
-File header format is the same for both versions (80 bytes minimum).
+Supported file versions: 2, 3, 4
+Versions 2/3 use an 80-byte header.
+Version 4 keeps the same 80-byte base header and may extend it to 128 bytes.
 """
 
 from __future__ import annotations
@@ -31,6 +32,12 @@ class FileHeader:
     total_payload_bytes: int
     reserved1: int
     node_id: str
+    latitude_e7: Optional[int] = None
+    longitude_e7: Optional[int] = None
+    height_cm: Optional[int] = None
+    pitch_deg: Optional[int] = None
+    yaw_deg: Optional[int] = None
+    roll_deg: Optional[int] = None
 
 
 def detect_endianness(f: io.BufferedReader) -> Tuple[int, str]:
@@ -106,12 +113,38 @@ def read_file_header(f: io.BufferedReader, endian_prefix: str) -> FileHeader:
     magic = magic.decode("ascii")
     node_id = node_id_bytes.split(b"\x00", 1)[0].decode("ascii", errors="ignore")
     
-    return FileHeader(
+    header = FileHeader(
         magic, version, endianness, compression, product_id, message_type,
         file_header_size, body_header_size, frame_header_size,
         file_created_ticks, last_written_ticks,
         total_frames_written, total_payload_bytes, reserved1, node_id
     )
+
+    # Version 4 extends the common file header beyond the legacy 80-byte base.
+    # If the extension is present, decode sensor location/orientation metadata.
+    if version >= 4 and file_header_size >= 128:
+        ext_fmt = f"{endian_prefix}iii3h30s"
+        ext_size = struct.calcsize(ext_fmt)  # 48 bytes (offsets 80..127)
+        ext_raw = f.read(ext_size)
+        if len(ext_raw) != ext_size:
+            raise EOFError("Failed to read v4 file header extension.")
+        (
+            latitude_e7,
+            longitude_e7,
+            height_cm,
+            pitch_deg,
+            yaw_deg,
+            roll_deg,
+            _reserved_ext,
+        ) = struct.unpack(ext_fmt, ext_raw)
+        header.latitude_e7 = latitude_e7
+        header.longitude_e7 = longitude_e7
+        header.height_cm = height_cm
+        header.pitch_deg = pitch_deg
+        header.yaw_deg = yaw_deg
+        header.roll_deg = roll_deg
+
+    return header
 
 
 def validate_version(version: int) -> None:
@@ -128,8 +161,8 @@ def validate_version(version: int) -> None:
     ValueError
         If version is not supported
     """
-    if version not in (2, 3):
-        raise ValueError(f"Unsupported file version: {version}. Supported versions: 2, 3")
+    if version not in (2, 3, 4):
+        raise ValueError(f"Unsupported file version: {version}. Supported versions: 2, 3, 4")
 
 
 def parse_file_header(filename: str) -> Tuple[FileHeader, str]:
@@ -145,7 +178,7 @@ def parse_file_header(filename: str) -> Tuple[FileHeader, str]:
     --------
     tuple : (file_header, endian_prefix)
         file_header : FileHeader
-            Parsed file header (versions 2 and 3 use same format)
+            Parsed file header (v2/v3 use 80-byte base; v4 may include extension)
         endian_prefix : str
             '<' for little-endian, '>' for big-endian
     
