@@ -78,13 +78,14 @@ class RadarCubeBodyHeader:
     fftshift_azimuth: int
     fftshift_elevation: int
     range_half_spectrum: int
-    integration_time_ms: float
+    coherent_integration_time_ms: float
     # Angular algorithm
     angle_estimation_algorithm: int  # 0=FFT, 1=CAPON, 2=MUSIC, 3=other
     # Additional resolution and scale parameters
     physical_range_resolution_m: float  # Bandwidth-determined
     is_db_scale: int  # 0=linear, 1=dB
     data_format: int  # 0=complex, 1=amplitude, 2=power
+    cpis_incoherently_integrated: int  # Number of CPIs summed incoherently
     _reserved3: bytes
 
 
@@ -312,12 +313,13 @@ def _read_radarcube_body_header(f: io.BufferedReader, ep: str) -> RadarCubeBodyH
         "B"    # fftshift_azimuth
         "B"    # fftshift_elevation
         "B"    # range_half_spectrum
-        "f"    # integration_time_ms
+        "f"    # coherent_integration_time_ms
         "B"    # angle_estimation_algorithm
         "f"    # physical_range_resolution_m
         "B"    # is_db_scale
         "B"    # data_format
-        "139s" # reserved3
+        "H"    # cpis_incoherently_integrated
+        "137s" # reserved3
     )
     size = struct.calcsize(fmt)
     raw = f.read(size)
@@ -363,12 +365,13 @@ def _read_radarcube_body_header(f: io.BufferedReader, ep: str) -> RadarCubeBodyH
         fftshift_azimuth=unpacked[33],
         fftshift_elevation=unpacked[34],
         range_half_spectrum=unpacked[35],
-        integration_time_ms=unpacked[36],
+        coherent_integration_time_ms=unpacked[36],
         angle_estimation_algorithm=unpacked[37],
         physical_range_resolution_m=unpacked[38],
         is_db_scale=unpacked[39],
         data_format=unpacked[40],
-        _reserved3=unpacked[41],
+        cpis_incoherently_integrated=unpacked[41],
+        _reserved3=unpacked[42],
     )
 
 
@@ -459,6 +462,7 @@ def _print_header_summary(FH: FileHeader, BH: RadarCubeBodyHeader) -> None:
     print(f"Data type: {dtype_str}")
     print(f"Data format: {_map_data_format(BH.data_format)}")
     print(f"Scale: {'dB' if BH.is_db_scale else 'linear'}")
+    print(f"Incoherent CPI integration: {BH.cpis_incoherently_integrated}")
     print(f"Storage order: Fortran (column-major, range varies fastest)")
     
     print("\n-- Range/Velocity Axes --")
@@ -505,7 +509,7 @@ def _print_header_summary(FH: FileHeader, BH: RadarCubeBodyHeader) -> None:
         print(f"FFT shifts: Range={'Yes' if BH.fftshift_range else 'No'}, "
               f"Doppler={'Yes' if BH.fftshift_doppler else 'No'}")
     print(f"Half spectrum: {'Yes' if BH.range_half_spectrum else 'No'}")
-    print(f"Integration time: {BH.integration_time_ms:.3f} ms")
+    print(f"Integration time: {BH.coherent_integration_time_ms:.3f} ms")
 
 
 # ==============================
@@ -660,11 +664,12 @@ def get_processing_info(headers: Dict[str, Any]) -> Dict[str, Any]:
         'fftshift_azimuth': bool(BH.fftshift_azimuth),
         'fftshift_elevation': bool(BH.fftshift_elevation),
         'range_half_spectrum': bool(BH.range_half_spectrum),
-        'integration_time_ms': BH.integration_time_ms,
+        'coherent_integration_time_ms': BH.coherent_integration_time_ms,
         'physical_velocity_resolution_mps': BH.physical_velocity_resolution_mps,
         'physical_range_resolution_m': BH.physical_range_resolution_m,
         'is_db_scale': bool(BH.is_db_scale),
         'data_format': _map_data_format(BH.data_format),
+        'cpis_incoherently_integrated': BH.cpis_incoherently_integrated,
         'angle_estimation_algorithm': _map_angle_algorithm(BH.angle_estimation_algorithm),
         'uses_fft_for_angles': uses_fft_for_angles(headers),
         'has_known_angles': has_known_angles(headers),

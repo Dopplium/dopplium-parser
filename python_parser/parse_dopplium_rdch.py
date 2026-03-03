@@ -11,7 +11,7 @@ Updated Format Notes:
 - Data stored in Fortran-order (column-major) with range varying fastest
 - Removed fields: start_freq_ghz, bandwidth_ghz, sample_rate_ksps, frame_period_ms,
   n_samples_original, n_chirps_original, n_accumulated_frames
-- Added fields: physical_velocity_resolution_mps, integration_time_ms, channel_order,
+- Added fields: physical_velocity_resolution_mps, coherent_integration_time_ms, channel_order,
   physical_range_resolution_m, is_db_scale, data_format
 - Body header: 106 bytes used, 150 bytes reserved (256 total)
 """
@@ -63,7 +63,7 @@ class RDChBodyHeader:
     fftshift_range: int  # 0=no, 1=yes
     fftshift_doppler: int
     range_half_spectrum: int
-    integration_time_ms: float
+    coherent_integration_time_ms: float
     # Channel order
     channel_order: np.ndarray  # 30 int8 values
     # Additional resolution and scale parameters
@@ -285,7 +285,7 @@ def _read_rdch_body_header(f: io.BufferedReader, ep: str) -> RDChBodyHeader:
         "B"    # fftshift_range
         "B"    # fftshift_doppler
         "B"    # range_half_spectrum
-        "f"    # integration_time_ms
+        "f"    # coherent_integration_time_ms
         "30b"  # channel_order (30 × int8)
         "f"    # physical_range_resolution_m
         "B"    # is_db_scale
@@ -326,7 +326,7 @@ def _read_rdch_body_header(f: io.BufferedReader, ep: str) -> RDChBodyHeader:
         fftshift_range=unpacked[20],
         fftshift_doppler=unpacked[21],
         range_half_spectrum=unpacked[22],
-        integration_time_ms=unpacked[23],
+        coherent_integration_time_ms=unpacked[23],
         channel_order=channel_order,
         physical_range_resolution_m=unpacked[54],
         is_db_scale=unpacked[55],
@@ -427,7 +427,7 @@ def _print_header_summary(FH: FileHeader, BH: RDChBodyHeader) -> None:
     print(f"FFT shifts: Range={'Yes' if BH.fftshift_range else 'No'}, "
           f"Doppler={'Yes' if BH.fftshift_doppler else 'No'}")
     print(f"Half spectrum: {'Yes' if BH.range_half_spectrum else 'No'}")
-    print(f"Integration time: {BH.integration_time_ms:.3f} ms")
+    print(f"Integration time: {BH.coherent_integration_time_ms:.3f} ms")
     
     # Show channel order if not all zeros
     if np.any(BH.channel_order != 0):
@@ -500,7 +500,7 @@ def get_processing_info(headers: Dict[str, Any]) -> Dict[str, Any]:
         'fftshift_range': bool(BH.fftshift_range),
         'fftshift_doppler': bool(BH.fftshift_doppler),
         'range_half_spectrum': bool(BH.range_half_spectrum),
-        'integration_time_ms': BH.integration_time_ms,
+        'coherent_integration_time_ms': BH.coherent_integration_time_ms,
         'physical_velocity_resolution_mps': BH.physical_velocity_resolution_mps,
         'physical_range_resolution_m': BH.physical_range_resolution_m,
         'is_db_scale': bool(BH.is_db_scale),

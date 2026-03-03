@@ -192,6 +192,9 @@ else:
     algo_map = {1: 'CAPON', 2: 'MUSIC', 3: 'other'}
     print(f"Using {algo_map.get(algo, 'unknown')} angle estimation")
 
+# Incoherent integration metadata (1 means no incoherent CPI summing)
+print(f"Incoherent CPI integration: {headers['body'].cpis_incoherently_integrated}")
+
 # Access single CPI
 cpi_data = data[:, :, :, :, 0]  # First CPI: [range, doppler, az, el]
 ```
@@ -425,7 +428,7 @@ All parsers share these capabilities:
 | **Verbose Mode** | Optional detailed output for debugging |
 | **Partial Reading** | Limit number of CPIs/frames/batches read |
 | **Endianness Support** | Handles both little-endian and big-endian files |
-| **Version Support** | Supports both Version 2 and Version 3 formats |
+| **Version Support** | Supports Version 2, Version 3, and Version 4 formats |
 | **Error Handling** | Comprehensive validation and error messages |
 
 ## Accessing Headers
@@ -454,15 +457,15 @@ for i, cpi_header in enumerate(headers['cpi'][:5]):  # or 'frame', 'batch'
 
 ## Message Type Reference
 
-| Message Type | Version 2 | Version 3 | Parser Function |
-|--------------|-----------|-----------|-----------------|
-| 0 | Unknown | Unknown | Not supported |
-| 1 | Detections | ADCData | `parse_dopplium_raw` |
-| 2 | Tracks | RDCMaps (RDCh) | `parse_dopplium_rdch` |
-| 3 | RawData/ADC | RadarCube | `parse_dopplium_raw` / `parse_dopplium_radarcube` |
-| 4 | Aggregated | Detections | `parse_dopplium_detections` |
-| 5 | - | Blobs | `parse_dopplium_blobs` |
-| 6 | - | Tracks | `parse_dopplium_tracks` |
+| Message Type | Version 2 | Version 3 | Version 4 | Parser Function |
+|--------------|-----------|-----------|-----------|-----------------|
+| 0 | Unknown | Unknown | Unknown | Not supported |
+| 1 | Detections | ADCData | ADCData | `parse_dopplium_raw` |
+| 2 | Tracks | RDCMaps (RDCh) | RDCMaps (RDCh) | `parse_dopplium_rdch` |
+| 3 | RawData/ADC | RadarCube | RadarCube | `parse_dopplium_raw` / `parse_dopplium_radarcube` |
+| 4 | Aggregated | Detections | Detections | `parse_dopplium_detections` |
+| 5 | - | Blobs | Blobs | `parse_dopplium_blobs` |
+| 6 | - | Tracks | Tracks | `parse_dopplium_tracks` |
 
 ## Helper Functions
 
