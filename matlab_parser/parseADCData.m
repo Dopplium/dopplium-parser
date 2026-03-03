@@ -17,6 +17,8 @@ function [data, headers] = parseADCData(fid, FH, machinefmt, filename, opts)
 % -------------------------------------------------------------------------
 % Read body header (ADC/RawData format)
 % -------------------------------------------------------------------------
+% Honor file_header_size for forward compatibility with possible file-header extensions.
+fseek(fid, FH.file_header_size, 'bof');
 BH = readBodyHeader(fid, machinefmt);
 assert(BH.body_header_size >= 192, 'Unexpected body_header_size (BH).');
 assert(BH.frame_header_size >= 24, 'Unexpected frame_header_size (BH).');
@@ -29,17 +31,17 @@ end
 % Dimensions & types (trust header bytes for sizing)
 % -------------------------------------------------------------------------
 S      = double(BH.n_samples_per_chirp);
-Cptx   = double(BH.n_chirps_per_frame); % chirps per TX
+CptxHdr = double(BH.n_chirps_per_frame); % spec: chirps per frame (legacy files may store per-TX)
 nRx    = double(BH.n_receivers);
 nTx    = double(BH.n_transmitters);
-Ctot   = Cptx * max(nTx,1);              % total chirps on wire (TX interleaved)
 bytesPerFrame = double(BH.bytes_per_frame);
 
 if ~(BH.data_order == 0 || BH.data_order == 1)
-    error('Unsupported data_order=%d. Only 0 (ByChannel) and 1 (ByChirp) are supported.', BH.data_order);
+    error('Unsupported data_order=%d. Only 0 (ByChannel) and 1 (BySample) are supported.', BH.data_order);
 end
 assert(BH.sample_format == 0, 'Only 16-bit aligned samples supported (sample_format==0).');
-assert(double(BH.bits_per_sample) == 16, 'Expected 16 bits per sample.');
+assert(ismember(double(BH.bits_per_sample), [12, 14, 16]), ...
+    'Unsupported bits_per_sample=%d (expected one of 12, 14, 16).', BH.bits_per_sample);
 
 % Header-guided sizing
 bytesPerElement   = double(BH.bytes_per_element);     % should be 2 if int16 containers
@@ -54,6 +56,25 @@ elementsPerSample = round(elementsPerSample);
 % Expected ints per (channel,chirp) block, from header bytes
 blockLenInts = S * elementsPerSample * intsPerElement;
 
+% Infer total chirps on wire from payload bytes.
+nInt16_hdr = bytesPerFrame / 2;
+denom = blockLenInts * nRx;
+if denom <= 0
+    error('Invalid header values: cannot infer chirp count from payload size.');
+end
+CtotFloat = nInt16_hdr / denom;
+Ctot = round(CtotFloat);
+if abs(CtotFloat - Ctot) > 1e-9
+    warning('Non-integer total chirp count inferred (%.6f). Rounding to %d.', CtotFloat, Ctot);
+end
+if Ctot <= 0
+    error('Invalid inferred total chirp count: %d.', Ctot);
+end
+
+% Build TX mapping from multiplexing mode and channel order.
+[txSeq, cTxSeq, chirpsPerTx, chirpInterpretation] = ...
+    buildTxMapping(BH, Ctot, nTx, CptxHdr, opts.verbose);
+
 % Determine number of frames from file size
 fileInfo = dir(filename);
 bytesAfterHeaders = fileInfo.bytes - FH.file_header_size - BH.body_header_size;
@@ -65,7 +86,6 @@ if isfinite(opts.maxFrames) && opts.maxFrames > nFramesTotal
 end
 
 % Output dimensions
-chirpsPerTx = Cptx;
 if nTx > 1
     nChanOut = nTx * nRx;
 else
@@ -101,6 +121,14 @@ for f = 1:nFrames
               f, FR.frame_payload_size, bytesPerFrame);
     end
 
+    % Honor frame_header_size for forward compatibility.
+    extraFrameHeaderBytes = double(FR.frame_header_size) - 24;
+    if extraFrameHeaderBytes < 0
+        error('Frame %d has invalid frame_header_size=%d (<24).', f, FR.frame_header_size);
+    elseif extraFrameHeaderBytes > 0
+        fseek(fid, extraFrameHeaderBytes, 'cof');
+    end
+
     % Ground truth count from header:
     nInt16_hdr = bytesPerFrame / 2;
     raw = fread(fid, nInt16_hdr, '*int16', 0, machinefmt);
@@ -124,7 +152,7 @@ for f = 1:nFrames
         case 0 % ByChannel: on-wire grouping is [for c=1..Ctot, for rx=1..nRx] contiguous blocks
             buf = reshape(raw, blockLenInts, nRx, Ctot); % (ints, rx, c)
 
-        case 1 % ByChirp: on-wire grouping is [for rx=1..nRx, for c=1..Ctot] contiguous blocks
+        case 1 % BySample: on-wire grouping is [for rx=1..nRx, for c=1..Ctot] contiguous blocks
             buf = reshape(raw, nRx, blockLenInts, Ctot); % (ints, c, rx)
             buf = permute(buf, [2, 1, 3]); % reorder to (ints, rx, c) for uniform processing
 
@@ -137,8 +165,8 @@ for f = 1:nFrames
         % ------------------------ REAL ------------------------
         % elementsPerSample should be 1 -> blockLenInts = S
         for c = 1:Ctot
-            tx   = mod(c-1, nTx) + 1;
-            c_tx = floor((c-1)/max(nTx,1)) + 1;
+            tx   = txSeq(c);
+            c_tx = cTxSeq(c);
             for rx = 1:nRx
                 seg = buf(:, rx, c); % int16 column
                 if nTx == 1
@@ -154,8 +182,8 @@ for f = 1:nFrames
         % ------------------------ COMPLEX ------------------------
         % elementsPerSample should be 2 -> blockLenInts = 2*S
         for c = 1:Ctot
-            tx   = mod(c-1, nTx) + 1;
-            c_tx = floor((c-1)/max(nTx,1)) + 1;
+            tx   = txSeq(c);
+            c_tx = cTxSeq(c);
             for rx = 1:nRx
                 seg = buf(:, rx, c); % int16 column of length elementsPerSample*S
                 if elementsPerSample == 2
@@ -202,13 +230,14 @@ headers.body  = BH;
 headers.frame = frames;
 
 if opts.verbose
+    fprintf('Chirp interpretation: %s | total_on_wire=%d | chirpsPerTx(dim-2)=%d | nTx=%d\n', ...
+        chirpInterpretation, Ctot, chirpsPerTx, nTx);
     fprintf('\nParsed data shape: [samples=%d, chirpsPerTx=%d, channels=%d, frames=%d]\n', ...
         size(data,1), size(data,2), size(data,3), size(data,4));
     if nTx > 1
-        fprintf('Multi-TX: TX interleaved by chirp. nTx=%d, total chirps on wire per frame=%d (= nTx * chirpsPerTx)\n', ...
-            nTx, Ctot);
+        fprintf('Multi-TX: nTx=%d, total chirps on wire per frame=%d\n', nTx, Ctot);
     else
-        fprintf('Single-TX: total chirps per frame=%d\n', Cptx);
+        fprintf('Single-TX: total chirps per frame=%d\n', Ctot);
     end
 end
 end
@@ -223,15 +252,16 @@ function BH = readBodyHeader(fid, machinefmt)
     BH.reserved1               = fread(fid, 1, 'uint16', 0, machinefmt);
     BH.total_frame_size        = fread(fid, 1, 'uint32', 0, machinefmt);
     BH.n_samples_per_chirp     = fread(fid, 1, 'uint32', 0, machinefmt);
-    BH.n_chirps_per_frame      = fread(fid, 1, 'uint32', 0, machinefmt); % per TX
+    BH.n_chirps_per_frame      = fread(fid, 1, 'uint32', 0, machinefmt); % spec: per frame
     BH.bits_per_sample         = fread(fid, 1, 'uint16', 0, machinefmt);
     BH.n_receivers             = fread(fid, 1, 'uint16', 0, machinefmt);
     BH.n_transmitters          = fread(fid, 1, 'uint16', 0, machinefmt);
     BH.sample_type             = fread(fid, 1, 'uint8',  0, machinefmt); % 0=real, 1=complex/IQ
-    BH.data_order              = fread(fid, 1, 'uint8',  0, machinefmt); % 0=ByChannel, 1=ByChirp
+    BH.data_order              = fread(fid, 1, 'uint8',  0, machinefmt); % 0=ByChannel, 1=BySample
     BH.iq_order                = fread(fid, 1, 'uint8',  0, machinefmt); % 0..3 (v1), 0..5 (v2)
     BH.sample_format           = fread(fid, 1, 'uint8',  0, machinefmt); % 0=16b aligned
-    BH.reserved2               = fread(fid, 1, 'uint16', 0, machinefmt);
+    BH.multiplexing_mode       = fread(fid, 1, 'uint8',  0, machinefmt); % 0=MIMO, 1=Beamforming
+    BH.reserved2               = fread(fid, 1, 'uint8',  0, machinefmt);
     BH.start_freq_ghz          = fread(fid, 1, 'double', 0, machinefmt);
     BH.bandwidth_ghz           = fread(fid, 1, 'double', 0, machinefmt);
     BH.idle_time_us            = fread(fid, 1, 'double', 0, machinefmt);
@@ -249,7 +279,8 @@ function BH = readBodyHeader(fid, machinefmt)
     BH.max_velocity_mps        = fread(fid, 1, 'single', 0, machinefmt);
     BH.range_resolution_m      = fread(fid, 1, 'single', 0, machinefmt);
     BH.velocity_resolution_mps = fread(fid, 1, 'single', 0, machinefmt);
-    BH.reserved3               = fread(fid, 52, '*uint8', 0, machinefmt);
+    BH.channel_order           = fread(fid, 30, '*uint8', 0, machinefmt);
+    BH.reserved3               = fread(fid, 22, '*uint8', 0, machinefmt);
 end
 
 function FR = readFrameHeader(fid, machinefmt)
@@ -373,5 +404,56 @@ function z = decodeIQV2(segInt16, S, iqOrder, opts)
         z = complex(Iflt, Qflt);
     else
         z = complex(cast(I, mapFloat(opts.cast)), cast(Q, mapFloat(opts.cast)));
+    end
+end
+
+function [txSeq, cTxSeq, chirpsPerTx, interpLabel] = buildTxMapping(BH, Ctot, nTx, cptxHdr, verbose)
+% BUILDTXMAPPING Determine TX index and per-TX chirp ordinal for each chirp on wire.
+    nTxEff = max(1, nTx);
+    if nTxEff == 1
+        txSeq = ones(1, Ctot);
+    else
+        if ~(BH.multiplexing_mode == 0 || BH.multiplexing_mode == 1)
+            error('Unsupported multiplexing_mode=%d.', BH.multiplexing_mode);
+        end
+
+        if BH.multiplexing_mode == 0
+            txOrder = double(BH.channel_order(:)');
+            txOrder = txOrder(txOrder > 0 & txOrder <= nTxEff);
+            if isempty(txOrder)
+                txOrder = 1:nTxEff;
+                if verbose
+                    warning(['channel_order is empty/invalid for multiplexing_mode=0. ' ...
+                             'Falling back to sequential TX order.']);
+                end
+            end
+        else
+            % Beamforming mode does not define per-chirp TX cycling in the current parser API.
+            txOrder = 1:nTxEff;
+            if verbose
+                warning(['multiplexing_mode=1 (Beamforming). Using sequential TX mapping ' ...
+                         'for compatibility.']);
+            end
+        end
+
+        txSeq = repmat(txOrder, 1, ceil(Ctot / numel(txOrder)));
+        txSeq = txSeq(1:Ctot);
+    end
+
+    txCounts = zeros(1, nTxEff);
+    cTxSeq = zeros(1, Ctot);
+    for c = 1:Ctot
+        tx = txSeq(c);
+        txCounts(tx) = txCounts(tx) + 1;
+        cTxSeq(c) = txCounts(tx);
+    end
+    chirpsPerTx = max(txCounts);
+
+    if nTxEff > 1 && cptxHdr * nTxEff == Ctot
+        interpLabel = 'per-tx';
+    elseif cptxHdr == Ctot
+        interpLabel = 'per-frame';
+    else
+        interpLabel = 'inferred';
     end
 end

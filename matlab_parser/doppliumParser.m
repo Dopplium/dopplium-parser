@@ -6,20 +6,14 @@ function [data, headers] = doppliumParser(filename, opts)
 %   message type, then dispatches to the appropriate parser.
 %
 %   Supported message types:
-%   Version 2:
-%     0 - Unknown (unsupported)
-%     1 - Detections (not yet implemented)
-%     2 - Tracks (not yet implemented)
-%     3 - RawData/ADC (currently supported)
-%     4 - Aggregated (not yet implemented)
-%   Version 3:
+%   Canonical mapping (spec v3/v4):
 %     0 - Unknown (unsupported)
 %     1 - ADCData (currently supported)
-%     2 - RDCMaps (not yet implemented)
-%     3 - RadarCube (not yet implemented)
-%     4 - Detections (not yet implemented)
-%     5 - Blobs (not yet implemented)
-%     6 - Tracks (not yet implemented)
+%     2 - RDCMaps (currently supported)
+%     3 - RadarCube (currently supported)
+%     4 - Detections (currently supported)
+%     5 - Blobs (currently supported)
+%     6 - Tracks (currently supported)
 %
 %   OUTPUTS
 %     data    : parsed data (format depends on message type)
@@ -71,64 +65,54 @@ end
 fseek(fid, 4, 'bof');
 version = fread(fid, 1, 'uint16', 0, machinefmt);
 
-% Read file header using version-specific parser
+% Read file header
 fseek(fid, 0, 'bof');
-switch version
-    case 2
-        FH = readFileHeader(fid, machinefmt);
-    case 3
-        FH = readFileHeader(fid, machinefmt);  % V3 has same format as V2
-    otherwise
-        error('Unsupported file version: %d', version);
+if version == 2 || version == 3 || version == 4
+    FH = readFileHeader(fid, machinefmt);
+else
+    error('Unsupported file version: %d', version);
 end
 
 % Validate file header
 assert(FH.file_header_size >= 80, 'Unexpected file_header_size.');
 
 % -------------------------------------------------------------------------
-% Dispatch based on version and message_type
+% Dispatch based on message_type.
+% Version 2 legacy compatibility:
+%   older writers used message_type=3 for ADC/raw data.
 % -------------------------------------------------------------------------
-switch version
-    case 2
-        % Version 2 message type mappings
-        switch FH.message_type
-            case 0
-                error('File has unknown message_type (0). Cannot parse.');
-            case 1 % Detections
-                [data, headers] = parseDetections(fid, FH, machinefmt, filename, opts);
-            case 2 % Tracks
-                [data, headers] = parseTracks(fid, FH, machinefmt, filename, opts);
-            case 3 % RawData/ADC
-                [data, headers] = parseADCData(fid, FH, machinefmt, filename, opts);
-            case 4 % Aggregated
-                [data, headers] = parseAggregated(fid, FH, machinefmt, filename, opts);
-            otherwise
-                error('Unsupported Version 2 message_type: %d', FH.message_type);
-        end
+messageType = double(FH.message_type);
+if version == 2 && messageType == 3
+    if opts.verbose
+        warning(['Legacy version-2 file uses message_type=3 for ADC/raw data. ' ...
+                 'Treating it as canonical ADCData (type=1).']);
+    end
+    messageType = 1;
+end
 
-    case 3
-        % Version 3 message type mappings
-        switch FH.message_type
-            case 0
-                error('File has unknown message_type (0). Cannot parse.');
-            case 1 % ADCData
-                [data, headers] = parseADCData(fid, FH, machinefmt, filename, opts);
-            case 2 % RDCMaps
-                [data, headers] = parseRDCMaps(fid, FH, machinefmt, filename, opts);
-            case 3 % RadarCube
-                [data, headers] = parseRadarCube(fid, FH, machinefmt, filename, opts);
-            case 4 % Detections
-                [data, headers] = parseDetections(fid, FH, machinefmt, filename, opts);
-            case 5 % Blobs
-                [data, headers] = parseBlobs(fid, FH, machinefmt, filename, opts);
-            case 6 % Tracks
-                [data, headers] = parseTracks(fid, FH, machinefmt, filename, opts);
-            otherwise
-                error('Unsupported Version 3 message_type: %d', FH.message_type);
+switch messageType
+    case 0
+        error('File has unknown message_type (0). Cannot parse.');
+    case 1 % ADCData
+        [data, headers] = parseADCData(fid, FH, machinefmt, filename, opts);
+    case 2 % RDCMaps
+        if version == 2
+            error('Version 2 RDCMaps (message_type=2) not implemented in this parser.');
         end
-
+        [data, headers] = parseRDCMaps(fid, FH, machinefmt, filename, opts);
+    case 3 % RadarCube
+        if version == 2
+            error('Version 2 message_type=3 is only supported as legacy ADC mapping.');
+        end
+        [data, headers] = parseRadarCube(fid, FH, machinefmt, filename, opts);
+    case 4 % Detections
+        [data, headers] = parseDetections(fid, FH, machinefmt, filename, opts);
+    case 5 % Blobs
+        [data, headers] = parseBlobs(fid, FH, machinefmt, filename, opts);
+    case 6 % Tracks
+        [data, headers] = parseTracks(fid, FH, machinefmt, filename, opts);
     otherwise
-        error('Unsupported version: %d', version);
+        error('Unsupported message_type=%d for version=%d.', FH.message_type, version);
 end
 
 end

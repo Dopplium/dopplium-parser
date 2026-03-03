@@ -14,10 +14,31 @@ function printHeaderSummary(FH, BH)
     fprintf('NodeId="%s"\n', FH.node_id);
 
     fprintf('\n-- Radar Config --\n');
-    fprintf('Samples/Chirp=%d  ChirpsPerTX/Frame=%d  Rx=%d  Tx=%d\n', ...
+    fprintf('Samples/Chirp=%d  Chirps/Frame=%d  Rx=%d  Tx=%d\n', ...
         BH.n_samples_per_chirp, BH.n_chirps_per_frame, BH.n_receivers, BH.n_transmitters);
     fprintf('SampleType=%s  IQOrder=%d  DataOrder=%d  BitsPerSample=%d\n', ...
         tern(BH.sample_type==0,'Real','Complex'), BH.iq_order, BH.data_order, BH.bits_per_sample);
+    muxName = 'Unknown';
+    if isfield(BH, 'multiplexing_mode')
+        if BH.multiplexing_mode == 0
+            muxName = 'MIMO';
+        elseif BH.multiplexing_mode == 1
+            muxName = 'Beamforming';
+        end
+        fprintf('MultiplexingMode=%s (%d)\n', muxName, BH.multiplexing_mode);
+    end
+    if isfield(BH, 'channel_order')
+        chOrder = double(BH.channel_order(:)');
+        chOrder = chOrder(chOrder > 0);
+        if ~isempty(chOrder)
+            nShow = min(numel(chOrder), 12);
+            orderStr = mat2str(chOrder(1:nShow));
+            if numel(chOrder) > nShow
+                orderStr = [orderStr(1:end-1), ', ...]'];
+            end
+            fprintf('ChannelOrder=%s\n', orderStr);
+        end
+    end
     fprintf('Bytes/Element=%d  Bytes/Sample=%d  Bytes/Frame=%d  TotalFrameSize=%d\n', ...
         BH.bytes_per_element, BH.bytes_per_sample, BH.bytes_per_frame, BH.total_frame_size);
     fprintf('StartFreq=%.3f GHz  BW=%.3f GHz  Fs=%.1f ksps  Slope=%.3f MHz/us\n', ...
