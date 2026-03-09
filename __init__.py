@@ -1,1 +1,5 @@
-"""Dopplium Parser - Parse Dopplium radar data formats."""
+"""Dopplium Parser package.
+
+Supports Dopplium message types for ADCData, RDCMaps (RDCh), RadarCube,
+Detections, Blobs, and Tracks.
+"""
