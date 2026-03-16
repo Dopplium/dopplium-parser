@@ -181,7 +181,7 @@ print(f"Shape: {data.shape}")
 # Get all axes
 range_axis = get_range_axis(headers)          # meters
 velocity_axis = get_velocity_axis(headers)    # m/s
-azimuth_axis = get_azimuth_axis(headers)      # degrees
+azimuth_axis = get_azimuth_axis(headers)      # degrees (FFT-aware, may be nonlinear)
 elevation_axis = get_elevation_axis(headers)  # degrees
 
 # Check angle estimation method
@@ -198,6 +198,13 @@ print(f"Incoherent CPI integration: {headers['body'].cpis_incoherently_integrate
 # Access single CPI
 cpi_data = data[:, :, :, :, 0]  # First CPI: [range, doppler, az, el]
 ```
+
+Axis mapping note:
+- For FFT angle estimation (`angle_estimation_algorithm=FFT` and `nfft_azimuth>0`),
+  `get_azimuth_axis()` returns nonlinear spacing in degrees.
+- For full-span metadata (`azimuth_min_deg=-90`, `azimuth_max_deg=+90`), it uses
+  ULA half-lambda FFT-bin mapping (`sin(theta_k)=2k/N`).
+- For non-FFT angle algorithms, azimuth/elevation helpers use linear metadata mapping.
 
 **Key Features:**
 - 4D data cubes (range × doppler × azimuth × elevation)
@@ -486,7 +493,7 @@ from python_parser import (
 range_m = get_range_axis(headers)
 velocity_mps = get_velocity_axis(headers)
 
-# RadarCube specific
+# RadarCube specific (azimuth/elevation helpers are FFT-aware)
 azimuth_deg = get_azimuth_axis(headers)
 elevation_deg = get_elevation_axis(headers)
 

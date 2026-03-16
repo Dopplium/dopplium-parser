@@ -550,6 +550,60 @@ def get_velocity_axis(headers: Dict[str, Any]) -> np.ndarray:
     return np.linspace(BH.velocity_min_mps, BH.velocity_max_mps, BH.n_doppler_bins)
 
 
+def _build_linear_axis(axis_min: float, axis_resolution: float, n_bins: int) -> np.ndarray:
+    """Build a linear axis using min + index * resolution."""
+    if n_bins <= 0:
+        return np.zeros((0,), dtype=np.float64)
+    return float(axis_min) + np.arange(n_bins, dtype=np.float64) * float(axis_resolution)
+
+
+def _build_angle_axis(
+    angle_min_deg: float,
+    angle_max_deg: float,
+    angle_resolution_deg: float,
+    n_bins: int,
+    *,
+    use_fft_mapping: bool,
+    fftshift_enabled: bool,
+) -> np.ndarray:
+    """
+    Build angle axis for bin-to-angle conversion.
+
+    For FFT angle estimation, bins are interpreted in direction-cosine space
+    (nonlinear in degrees). For full-span metadata [-90,+90], uses ULA half-lambda
+    FFT-bin mapping: sin(theta_k) = 2k/N.
+    """
+    if n_bins <= 0:
+        return np.zeros((0,), dtype=np.float64)
+    if n_bins == 1:
+        return np.array([float(angle_min_deg)], dtype=np.float64)
+
+    angle_min = float(angle_min_deg)
+    angle_max = float(angle_max_deg)
+
+    if use_fft_mapping and (-90.0 <= angle_min < angle_max <= 90.0):
+        if np.isclose(angle_min, -90.0, atol=1e-3) and np.isclose(angle_max, 90.0, atol=1e-3):
+            k = np.fft.fftfreq(n_bins) * float(n_bins)
+            if fftshift_enabled:
+                k = np.fft.fftshift(k)
+            sin_theta = np.clip((2.0 * k) / float(n_bins), -1.0, 1.0)
+            return np.rad2deg(np.arcsin(sin_theta)).astype(np.float64)
+
+        sin_min = np.sin(np.deg2rad(angle_min))
+        sin_max = np.sin(np.deg2rad(angle_max))
+        direction_cosine_axis = np.linspace(sin_min, sin_max, n_bins, dtype=np.float64)
+        angle_axis = np.rad2deg(np.arcsin(np.clip(direction_cosine_axis, -1.0, 1.0)))
+        if not fftshift_enabled:
+            angle_axis = np.fft.ifftshift(angle_axis)
+        return angle_axis
+
+    if float(angle_resolution_deg) != 0.0:
+        return _build_linear_axis(angle_min, angle_resolution_deg, n_bins)
+    if angle_max > angle_min:
+        return np.linspace(angle_min, angle_max, n_bins, dtype=np.float64)
+    return np.full((n_bins,), angle_min, dtype=np.float64)
+
+
 def get_azimuth_axis(headers: Dict[str, Any]) -> np.ndarray:
     """
     Extract azimuth axis from headers.
@@ -565,11 +619,21 @@ def get_azimuth_axis(headers: Dict[str, Any]) -> np.ndarray:
     
     Note:
     -----
-    Returns linearly spaced values even if actual angles are unknown.
-    Use has_known_angles() to check if angles are from antenna config or defaults.
+    For FFT angle estimation (angle_estimation_algorithm=FFT with nfft_azimuth>0),
+    returns nonlinear angle spacing. For full-span metadata [-90,+90], uses ULA
+    half-lambda FFT-bin mapping (sin(theta_k)=2k/N). For non-FFT algorithms, uses
+    linear metadata mapping.
     """
     BH = headers['body']
-    return np.linspace(BH.azimuth_min_deg, BH.azimuth_max_deg, BH.n_azimuth_bins)
+    angle_algo = int(getattr(BH, 'angle_estimation_algorithm', -1))
+    return _build_angle_axis(
+        BH.azimuth_min_deg,
+        BH.azimuth_max_deg,
+        BH.azimuth_resolution_deg,
+        BH.n_azimuth_bins,
+        use_fft_mapping=(angle_algo == 0 and int(getattr(BH, 'nfft_azimuth', 0)) > 0),
+        fftshift_enabled=bool(getattr(BH, 'fftshift_azimuth', True)),
+    )
 
 
 def get_elevation_axis(headers: Dict[str, Any]) -> np.ndarray:
@@ -587,11 +651,19 @@ def get_elevation_axis(headers: Dict[str, Any]) -> np.ndarray:
     
     Note:
     -----
-    Returns linearly spaced values even if actual angles are unknown.
-    Use has_known_angles() to check if angles are from antenna config or defaults.
+    For FFT angle estimation (angle_estimation_algorithm=FFT with nfft_elevation>0),
+    returns nonlinear angle spacing. For non-FFT algorithms, uses linear metadata mapping.
     """
     BH = headers['body']
-    return np.linspace(BH.elevation_min_deg, BH.elevation_max_deg, BH.n_elevation_bins)
+    angle_algo = int(getattr(BH, 'angle_estimation_algorithm', -1))
+    return _build_angle_axis(
+        BH.elevation_min_deg,
+        BH.elevation_max_deg,
+        BH.elevation_resolution_deg,
+        BH.n_elevation_bins,
+        use_fft_mapping=(angle_algo == 0 and int(getattr(BH, 'nfft_elevation', 0)) > 0),
+        fftshift_enabled=bool(getattr(BH, 'fftshift_elevation', True)),
+    )
 
 
 def has_known_angles(headers: Dict[str, Any]) -> bool:
