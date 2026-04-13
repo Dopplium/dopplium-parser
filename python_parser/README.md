@@ -435,7 +435,7 @@ All parsers share these capabilities:
 | **Verbose Mode** | Optional detailed output for debugging |
 | **Partial Reading** | Limit number of CPIs/frames/batches read |
 | **Endianness Support** | Handles both little-endian and big-endian files |
-| **Version Support** | Supports Version 2, Version 3, and Version 4 formats |
+| **Version Support** | Supports Version 2, Version 3, Version 4, and Version 5 formats |
 | **Error Handling** | Comprehensive validation and error messages |
 
 ## Accessing Headers
@@ -464,15 +464,15 @@ for i, cpi_header in enumerate(headers['cpi'][:5]):  # or 'frame', 'batch'
 
 ## Message Type Reference
 
-| Message Type | Version 2 | Version 3 | Version 4 | Parser Function |
-|--------------|-----------|-----------|-----------|-----------------|
-| 0 | Unknown | Unknown | Unknown | Not supported |
-| 1 | Detections | ADCData | ADCData | `parse_dopplium_raw` |
-| 2 | Tracks | RDCMaps (RDCh) | RDCMaps (RDCh) | `parse_dopplium_rdch` |
-| 3 | RawData/ADC | RadarCube | RadarCube | `parse_dopplium_raw` / `parse_dopplium_radarcube` |
-| 4 | Aggregated | Detections | Detections | `parse_dopplium_detections` |
-| 5 | - | Blobs | Blobs | `parse_dopplium_blobs` |
-| 6 | - | Tracks | Tracks | `parse_dopplium_tracks` |
+| Message Type | Version 2 | Version 3 | Version 4 | Version 5 | Parser Function |
+|--------------|-----------|-----------|-----------|-----------|-----------------|
+| 0 | Unknown | Unknown | Unknown | Unknown | Not supported |
+| 1 | Detections | ADCData | ADCData | ADCData | `parse_dopplium_raw` |
+| 2 | Tracks | RDCMaps (RDCh) | RDCMaps (RDCh) | RDCMaps (RDCh) | `parse_dopplium_rdch` |
+| 3 | RawData/ADC | RadarCube | RadarCube | RadarCube | `parse_dopplium_raw` / `parse_dopplium_radarcube` |
+| 4 | Aggregated | Detections | Detections | Detections | `parse_dopplium_detections` |
+| 5 | - | Blobs | Blobs | Blobs | `parse_dopplium_blobs` |
+| 6 | - | Tracks | Tracks | Tracks | `parse_dopplium_tracks` |
 
 ## Helper Functions
 

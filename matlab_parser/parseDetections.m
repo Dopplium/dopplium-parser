@@ -1,5 +1,5 @@
 function [data, headers] = parseDetections(fid, FH, machinefmt, filename, opts)
-% PARSEDETECTIONS Parse Dopplium Detections data (v3 message_type=4)
+% PARSEDETECTIONS Parse Dopplium Detections data (v3/v4/v5 message_type=4)
 %   [data, headers] = parseDetections(fid, FH, machinefmt, filename, opts)
 %
 %   Returns:
@@ -10,10 +10,10 @@ if FH.version == 2
     error('parseDetections:Version2NotImplemented', ...
         'Version 2 Detections are not implemented in this parser.');
 end
-if ~(FH.version == 3 || FH.version == 4) || FH.message_type ~= 4
+if ~(FH.version == 3 || FH.version == 4 || FH.version == 5) || FH.message_type ~= 4
     error('parseDetections:InvalidMessageType', ...
         ['This file is not Detections (version=%d, message_type=%d, ' ...
-         'expected version=3/4, type=4).'], ...
+         'expected version=3/4/5, type=4).'], ...
         FH.version, FH.message_type);
 end
 

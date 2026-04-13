@@ -1,15 +1,15 @@
 function [data, headers] = parseRadarCube(fid, FH, machinefmt, filename, opts)
-% PARSERADARCUBE Parse Dopplium RadarCube data (v3 message_type=3)
+% PARSERADARCUBE Parse Dopplium RadarCube data (v3/v4/v5 message_type=3)
 %   [data, headers] = parseRadarCube(fid, FH, machinefmt, filename, opts)
 %
 %   Returns:
 %     data    : array shaped [range_bins, doppler_bins, azimuth_bins, elevation_bins, cpis]
 %     headers : struct with fields .file, .body, .cpi
 
-if ~(FH.version == 3 || FH.version == 4) || FH.message_type ~= 3
+if ~(FH.version == 3 || FH.version == 4 || FH.version == 5) || FH.message_type ~= 3
     error('parseRadarCube:InvalidMessageType', ...
         ['This file is not RadarCube (version=%d, message_type=%d, ' ...
-         'expected version=3/4, type=3).'], ...
+         'expected version=3/4/5, type=3).'], ...
         FH.version, FH.message_type);
 end
 

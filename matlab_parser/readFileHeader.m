@@ -1,5 +1,5 @@
 function FH = readFileHeader(fid, machinefmt)
-% READFILEHEADER Read Dopplium file header (v2/v3 base + optional v4 extension)
+% READFILEHEADER Read Dopplium file header (v2/v3/v4/v5 base + optional extension)
 %   FH = readFileHeader(fid, machinefmt)
 %
 %   INPUTS
@@ -14,6 +14,7 @@ function FH = readFileHeader(fid, machinefmt)
 %          .last_written_utc_ticks, .total_frames_written,
 %          .total_payload_bytes, .reserved1, .node_id
 %          plus v4+ location extension when present.
+%          In version >= 5, total_payload_bytes is uint64 and reserved1 is not serialized.
 
     headerStart = ftell(fid);
     FH.magic                   = char(fread(fid, [1,4], '*char'));
@@ -29,8 +30,13 @@ function FH = readFileHeader(fid, machinefmt)
     FH.file_created_utc_ticks  = fread(fid, 1, 'int64',  0, machinefmt);
     FH.last_written_utc_ticks  = fread(fid, 1, 'int64',  0, machinefmt);
     FH.total_frames_written    = fread(fid, 1, 'uint32', 0, machinefmt);
-    FH.total_payload_bytes     = fread(fid, 1, 'uint32', 0, machinefmt);
-    FH.reserved1               = fread(fid, 1, 'uint32', 0, machinefmt);
+    if double(FH.version) >= 5
+        FH.total_payload_bytes = fread(fid, 1, 'uint64', 0, machinefmt);
+        FH.reserved1           = uint32(0);
+    else
+        FH.total_payload_bytes = fread(fid, 1, 'uint32', 0, machinefmt);
+        FH.reserved1           = fread(fid, 1, 'uint32', 0, machinefmt);
+    end
     nodeBytes                  = fread(fid, 32, '*uint8', 0, machinefmt);
     nodeChars                  = char(nodeBytes(:)');
     nullPos                    = find(nodeBytes == 0, 1, 'first');

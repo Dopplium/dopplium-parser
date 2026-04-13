@@ -2,16 +2,17 @@
 Common header parsing for Dopplium binary files.
 Handles initial file header parsing, version detection, and message type detection.
 
-Supported file versions: 2, 3, 4
+Supported file versions: 2, 3, 4, 5
 Versions 2/3 use an 80-byte header.
-Version 4 keeps the same 80-byte base header and may extend it to 128 bytes.
+Versions 4/5 keep the same 80-byte base header and may extend it to 128 bytes.
+Version 5 changes total_payload_bytes from uint32 to uint64.
 """
 
 from __future__ import annotations
 import io
 import struct
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 @dataclass
@@ -94,21 +95,61 @@ def read_file_header(f: io.BufferedReader, endian_prefix: str) -> FileHeader:
     FileHeader : Parsed file header
     """
     # Layout (80 bytes):
-    # 4s magic, H version, B endianness, B compression, B product_id, B message_type,
-    # H file_header_size, I body_header_size, I frame_header_size,
-    # q file_created_ticks, q last_written_ticks,
-    # I total_frames_written, I total_payload_bytes, I reserved1,
-    # 32s node_id
-    fmt = f"{endian_prefix}4sHBBBBHIIqqIII32s"
-    size = struct.calcsize(fmt)
+    # v2/v3/v4:
+    #   4s magic, H version, B endianness, B compression, B product_id, B message_type,
+    #   H file_header_size, I body_header_size, I frame_header_size,
+    #   q file_created_ticks, q last_written_ticks,
+    #   I total_frames_written, I total_payload_bytes (uint32), I reserved1, 32s node_id
+    # v5:
+    #   4s magic, H version, B endianness, B compression, B product_id, B message_type,
+    #   H file_header_size, I body_header_size, I frame_header_size,
+    #   q file_created_ticks, q last_written_ticks,
+    #   I total_frames_written, Q total_payload_bytes (uint64), 32s node_id
+    size = 80
     raw = f.read(size)
     if len(raw) != size:
         raise EOFError("Failed to read file header.")
-    
-    (magic, version, endianness, compression, product_id, message_type,
-     file_header_size, body_header_size, frame_header_size,
-     file_created_ticks, last_written_ticks, total_frames_written,
-     total_payload_bytes, reserved1, node_id_bytes) = struct.unpack(fmt, raw)
+
+    version = struct.unpack_from(f"{endian_prefix}H", raw, 4)[0]
+
+    if version >= 5:
+        fmt = f"{endian_prefix}4sHBBBBHIIqqIQ32s"
+        (
+            magic,
+            version,
+            endianness,
+            compression,
+            product_id,
+            message_type,
+            file_header_size,
+            body_header_size,
+            frame_header_size,
+            file_created_ticks,
+            last_written_ticks,
+            total_frames_written,
+            total_payload_bytes,
+            node_id_bytes,
+        ) = struct.unpack(fmt, raw)
+        reserved1 = 0
+    else:
+        fmt = f"{endian_prefix}4sHBBBBHIIqqIII32s"
+        (
+            magic,
+            version,
+            endianness,
+            compression,
+            product_id,
+            message_type,
+            file_header_size,
+            body_header_size,
+            frame_header_size,
+            file_created_ticks,
+            last_written_ticks,
+            total_frames_written,
+            total_payload_bytes,
+            reserved1,
+            node_id_bytes,
+        ) = struct.unpack(fmt, raw)
     
     magic = magic.decode("ascii")
     node_id = node_id_bytes.split(b"\x00", 1)[0].decode("ascii", errors="ignore")
@@ -120,14 +161,14 @@ def read_file_header(f: io.BufferedReader, endian_prefix: str) -> FileHeader:
         total_frames_written, total_payload_bytes, reserved1, node_id
     )
 
-    # Version 4 extends the common file header beyond the legacy 80-byte base.
+    # Version 4+ extends the common file header beyond the legacy 80-byte base.
     # If the extension is present, decode sensor location/orientation metadata.
     if version >= 4 and file_header_size >= 128:
         ext_fmt = f"{endian_prefix}iii3h30s"
         ext_size = struct.calcsize(ext_fmt)  # 48 bytes (offsets 80..127)
         ext_raw = f.read(ext_size)
         if len(ext_raw) != ext_size:
-            raise EOFError("Failed to read v4 file header extension.")
+            raise EOFError("Failed to read v4+ file header extension.")
         (
             latitude_e7,
             longitude_e7,
@@ -161,8 +202,8 @@ def validate_version(version: int) -> None:
     ValueError
         If version is not supported
     """
-    if version not in (2, 3, 4):
-        raise ValueError(f"Unsupported file version: {version}. Supported versions: 2, 3, 4")
+    if version not in (2, 3, 4, 5):
+        raise ValueError(f"Unsupported file version: {version}. Supported versions: 2, 3, 4, 5")
 
 
 def parse_file_header(filename: str) -> Tuple[FileHeader, str]:
@@ -178,7 +219,7 @@ def parse_file_header(filename: str) -> Tuple[FileHeader, str]:
     --------
     tuple : (file_header, endian_prefix)
         file_header : FileHeader
-            Parsed file header (v2/v3 use 80-byte base; v4 may include extension)
+            Parsed file header (v2/v3 use 80-byte base; v4/v5 may include extension)
         endian_prefix : str
             '<' for little-endian, '>' for big-endian
     

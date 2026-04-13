@@ -1,15 +1,15 @@
 function [data, headers] = parseBlobs(fid, FH, machinefmt, filename, opts)
-% PARSEBLOBS Parse Dopplium Blobs data (v3 message_type=5)
+% PARSEBLOBS Parse Dopplium Blobs data (v3/v4/v5 message_type=5)
 %   [data, headers] = parseBlobs(fid, FH, machinefmt, filename, opts)
 %
 %   Returns:
 %     data    : struct of column vectors (fields aligned with Python parser)
 %     headers : struct with fields .file, .body, .batch
 
-if ~(FH.version == 3 || FH.version == 4) || FH.message_type ~= 5
+if ~(FH.version == 3 || FH.version == 4 || FH.version == 5) || FH.message_type ~= 5
     error('parseBlobs:InvalidMessageType', ...
         ['This file is not Blobs (version=%d, message_type=%d, ' ...
-         'expected version=3/4, type=5).'], ...
+         'expected version=3/4/5, type=5).'], ...
         FH.version, FH.message_type);
 end
 

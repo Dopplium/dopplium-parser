@@ -3,7 +3,7 @@ Parser for Dopplium RawData/ADC binary format.
 
 Supports:
 - Version 2, message_type 3: RawData/ADC
-- Version 3, message_type 1: ADCData
+- Version 3/4/5, message_type 1: ADCData
 
 Returns numpy arrays shaped [samples, chirpsPerTx, channels, frames] and all headers.
 Handles body header config_version 1/2/3, with config_version 3 adding channel_order.
@@ -127,10 +127,10 @@ def parse_dopplium_raw(
         
         # Check message type based on version
         # Version 2: message_type = 3 (RawData)
-        # Version 3: message_type = 1 (ADCData)
+        # Version 3/4/5: message_type = 1 (ADCData)
         if FH.version == 2 and FH.message_type != 3:
             raise ValueError(f"This file is not RawData (message_type={FH.message_type}, expected 3 for version 2).")
-        elif FH.version in (3, 4) and FH.message_type != 1:
+        elif FH.version in (3, 4, 5) and FH.message_type != 1:
             raise ValueError(
                 f"This file is not ADCData (message_type={FH.message_type}, expected 1 for version {FH.version})."
             )

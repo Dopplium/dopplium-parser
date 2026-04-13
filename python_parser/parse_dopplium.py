@@ -25,6 +25,14 @@ Supported message types:
     4 - Detections (supported)
     5 - Blobs (supported)
     6 - Tracks (supported)
+  Version 5:
+    0 - Unknown (unsupported)
+    1 - ADCData (supported via RawData parser)
+    2 - RDCMaps/RDCh (supported)
+    3 - RadarCube (supported)
+    4 - Detections (supported)
+    5 - Blobs (supported)
+    6 - Tracks (supported)
 """
 
 from __future__ import annotations
@@ -53,12 +61,12 @@ def parse_dopplium(
     
     Supported combinations:
     - Version 2, message_type 3: RawData/ADC -> parse_dopplium_raw
-    - Version 3/4, message_type 1: ADCData -> parse_dopplium_raw
-    - Version 3/4, message_type 2: RDCMaps/RDCh -> parse_dopplium_rdch
-    - Version 3/4, message_type 3: RadarCube -> parse_dopplium_radarcube
-    - Version 3/4, message_type 4: Detections -> parse_dopplium_detections
-    - Version 3/4, message_type 5: Blobs -> parse_dopplium_blobs
-    - Version 3/4, message_type 6: Tracks -> parse_dopplium_tracks
+    - Version 3/4/5, message_type 1: ADCData -> parse_dopplium_raw
+    - Version 3/4/5, message_type 2: RDCMaps/RDCh -> parse_dopplium_rdch
+    - Version 3/4/5, message_type 3: RadarCube -> parse_dopplium_radarcube
+    - Version 3/4/5, message_type 4: Detections -> parse_dopplium_detections
+    - Version 3/4/5, message_type 5: Blobs -> parse_dopplium_blobs
+    - Version 3/4/5, message_type 6: Tracks -> parse_dopplium_tracks
     
     Parameters:
     -----------
@@ -126,8 +134,8 @@ def parse_dopplium(
         else:
             raise ValueError(f"Unsupported Version 2 message_type: {msg_type}")
     
-    # Version 3/4 message type mappings
-    elif version in (3, 4):
+    # Version 3/4/5 message type mappings
+    elif version in (3, 4, 5):
         if msg_type == 0:
             raise ValueError("File has unknown message_type (0). Cannot parse.")
         elif msg_type == 1:
@@ -204,7 +212,7 @@ def parse_dopplium(
             raise ValueError(f"Unsupported Version {version} message_type: {msg_type}")
     
     else:
-        raise ValueError(f"Unsupported file version: {version}. Supported versions: 2, 3, 4")
+        raise ValueError(f"Unsupported file version: {version}. Supported versions: 2, 3, 4, 5")
 
 
 # Re-export individual parsers for direct use

@@ -1,5 +1,5 @@
 function [data, headers] = parseTracks(fid, FH, machinefmt, filename, opts)
-% PARSETRACKS Parse Dopplium Tracks data (v3 message_type=6)
+% PARSETRACKS Parse Dopplium Tracks data (v3/v4/v5 message_type=6)
 %   [data, headers] = parseTracks(fid, FH, machinefmt, filename, opts)
 %
 %   Returns:
@@ -10,10 +10,10 @@ if FH.version == 2
     error('parseTracks:Version2NotImplemented', ...
         'Version 2 Tracks are not implemented in this parser.');
 end
-if ~(FH.version == 3 || FH.version == 4) || FH.message_type ~= 6
+if ~(FH.version == 3 || FH.version == 4 || FH.version == 5) || FH.message_type ~= 6
     error('parseTracks:InvalidMessageType', ...
         ['This file is not Tracks (version=%d, message_type=%d, ' ...
-         'expected version=3/4, type=6).'], ...
+         'expected version=3/4/5, type=6).'], ...
         FH.version, FH.message_type);
 end
 

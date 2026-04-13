@@ -15,7 +15,7 @@ MATLAB:
 
 ## Supported Message Types
 
-### Parser versions 3 and 4
+### Parser versions 3, 4, and 5
 
 - `1`: ADCData
 - `2`: RDCMaps (RDCh)
