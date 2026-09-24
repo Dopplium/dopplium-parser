@@ -207,7 +207,8 @@ for f = 1:nFrames
                     % Decode based on body header config version
                     if BH.config_version == 1
                         z = decodeIQV1(seg, S, BH.iq_order, opts);
-                    elseif BH.config_version == 2
+                    elseif BH.config_version == 2 || BH.config_version == 3
+                        % v3 = v2 layout with channel_order declared valid
                         z = decodeIQV2(seg, S, BH.iq_order, opts);
                     else
                         error('Unsupported body header config_version: %d', BH.config_version);
@@ -275,7 +276,7 @@ function BH = readBodyHeader(fid, machinefmt)
     BH.n_transmitters          = fread(fid, 1, 'uint16', 0, machinefmt);
     BH.sample_type             = fread(fid, 1, 'uint8',  0, machinefmt); % 0=real, 1=complex/IQ
     BH.data_order              = fread(fid, 1, 'uint8',  0, machinefmt); % 0=ByChannel, 1=BySample
-    BH.iq_order                = fread(fid, 1, 'uint8',  0, machinefmt); % 0..3 (v1), 0..5 (v2)
+    BH.iq_order                = fread(fid, 1, 'uint8',  0, machinefmt); % 0..3 (v1), 0..5 (v2/v3)
     BH.sample_format           = fread(fid, 1, 'uint8',  0, machinefmt); % 0=16b aligned
     BH.multiplexing_mode       = fread(fid, 1, 'uint8',  0, machinefmt); % 0=MIMO, 1=Beamforming
     BH.reserved2               = fread(fid, 1, 'uint8',  0, machinefmt);
