@@ -2,10 +2,12 @@
 Common header parsing for Dopplium binary files.
 Handles initial file header parsing, version detection, and message type detection.
 
-Supported file versions: 2, 3, 4, 5
+Supported file versions: 2, 3, 4, 5, 6
 Versions 2/3 use an 80-byte header.
-Versions 4/5 keep the same 80-byte base header and may extend it to 128 bytes.
+Versions 4/5/6 keep the same 80-byte base header and may extend it to 128 bytes.
 Version 5 changes total_payload_bytes from uint32 to uint64.
+Version 6 (DOP-BIN 2.0) uses the version 5 layout unchanged; it marks ADC files
+that use multiplexing_mode 2 (a per-frame tx_map in a 32-byte payload header).
 """
 
 from __future__ import annotations
@@ -13,6 +15,9 @@ import io
 import struct
 from dataclasses import dataclass
 from typing import Optional, Tuple
+
+
+SUPPORTED_FILE_VERSIONS = (2, 3, 4, 5, 6)
 
 
 @dataclass
@@ -100,7 +105,7 @@ def read_file_header(f: io.BufferedReader, endian_prefix: str) -> FileHeader:
     #   H file_header_size, I body_header_size, I frame_header_size,
     #   q file_created_ticks, q last_written_ticks,
     #   I total_frames_written, I total_payload_bytes (uint32), I reserved1, 32s node_id
-    # v5:
+    # v5/v6:
     #   4s magic, H version, B endianness, B compression, B product_id, B message_type,
     #   H file_header_size, I body_header_size, I frame_header_size,
     #   q file_created_ticks, q last_written_ticks,
@@ -202,8 +207,8 @@ def validate_version(version: int) -> None:
     ValueError
         If version is not supported
     """
-    if version not in (2, 3, 4, 5):
-        raise ValueError(f"Unsupported file version: {version}. Supported versions: 2, 3, 4, 5")
+    if version not in SUPPORTED_FILE_VERSIONS:
+        raise ValueError(f"Unsupported file version: {version}. Supported versions: 2, 3, 4, 5, 6")
 
 
 def parse_file_header(filename: str) -> Tuple[FileHeader, str]:
@@ -219,7 +224,7 @@ def parse_file_header(filename: str) -> Tuple[FileHeader, str]:
     --------
     tuple : (file_header, endian_prefix)
         file_header : FileHeader
-            Parsed file header (v2/v3 use 80-byte base; v4/v5 may include extension)
+            Parsed file header (v2/v3 use 80-byte base; v4/v5/v6 may include extension)
         endian_prefix : str
             '<' for little-endian, '>' for big-endian
     

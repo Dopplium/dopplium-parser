@@ -6,7 +6,7 @@ function [data, headers] = doppliumParser(filename, opts)
 %   message type, then dispatches to the appropriate parser.
 %
 %   Supported message types:
-%   Canonical mapping (spec v3/v4/v5):
+%   Canonical mapping (spec v3/v4/v5/v6):
 %     0 - Unknown (unsupported)
 %     1 - ADCData (currently supported)
 %     2 - RDCMaps (currently supported)
@@ -75,7 +75,7 @@ version = fread(fid, 1, 'uint16', 0, machinefmt);
 
 % Read file header
 fseek(fid, 0, 'bof');
-if version == 2 || version == 3 || version == 4 || version == 5
+if version == 2 || version == 3 || version == 4 || version == 5 || version == 6
     FH = readFileHeader(fid, machinefmt);
 else
     error('Unsupported file version: %d', version);

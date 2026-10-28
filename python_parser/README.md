@@ -126,8 +126,41 @@ print(f"Chirp bandwidth: {body_header.bandwidth_ghz} GHz")
 - Configurable output type (float32, float64, int16)
 - Complex or separate I/Q channels
 - Frame-based organization
+- DOP-BIN 2.0 files with a per-frame transmitter map (see below)
 
 **Common Use Case:** Input to custom processing pipelines
+
+#### DOP-BIN 2.0: per-frame `tx_map` (file version 6, `multiplexing_mode` 2)
+
+In these files the transmit pattern may change from frame to frame. Every frame's
+32-byte payload header carries `tx_map`, and `n_chirps_per_frame` counts all chirps
+of the frame. The data is returned as `[samples, chirps, receivers, frames]` in
+transmission order; `n_transmitters` is information only.
+
+```python
+from python_parser import parse_dopplium_raw, split_pattern_slots
+
+data, headers = parse_dopplium_raw("capture.dop")
+print(headers["body"].multiplexing_mode)          # 2
+
+for i, frame_header in enumerate(headers["frame"]):
+    tx_map = frame_header.tx_map                   # e.g. (1, 2), (1,), (2,) or ()
+    if not tx_map:
+        continue                                   # no transmitter information
+    slots = split_pattern_slots(data[:, :, :, i], tx_map)
+    # slots: [samples, chirps // L, L, receivers]; slots[:, m, k, :] is chirp m*L + k,
+    # sent by tx_map[k]. Chirps of one slot are L*PRI apart: run Doppler along axis 1.
+```
+
+Do not collect every chirp of one transmitter across slots: with `tx_map = (1, 1, 2, 2)`
+the TX1 chirps are not uniformly spaced. When accumulating frames into a CPI, end the
+CPI whenever `tx_map` changes.
+
+Frames are validated as they are read. A `tx_map` with a non-zero entry after the
+terminating 0 (for example `[1, 0, 2, 0]`), or with a length that does not divide the
+chirp count, raises `ValueError` naming the frame; `parse_tx_map(raw)` applies the same
+rule to four raw bytes. Mode 2 also requires file version 6, `config_version` 4 and a
+32-byte payload header, and an unknown `multiplexing_mode` (3 and above) is rejected.
 
 ### 2. parse_dopplium_rdch - Range-Doppler-Channel
 
@@ -461,7 +494,7 @@ All parsers share these capabilities:
 | **Partial Reading** | Limit number of CPIs/frames/batches read |
 | **Offset Tensor Reading** | For ADC, RDCh, and RadarCube, `start_frame` reads from a zero-based frame/CPI offset |
 | **Endianness Support** | Handles both little-endian and big-endian files |
-| **Version Support** | Supports Version 2, Version 3, Version 4, and Version 5 formats |
+| **Version Support** | Supports Version 2, 3, 4, 5 and 6 formats |
 | **Error Handling** | Comprehensive validation and error messages |
 
 ## Accessing Headers
@@ -490,8 +523,8 @@ for i, cpi_header in enumerate(headers['cpi'][:5]):  # or 'frame', 'batch'
 
 ## Message Type Reference
 
-| Message Type | Version 2 | Version 3 | Version 4 | Version 5 | Parser Function |
-|--------------|-----------|-----------|-----------|-----------|-----------------|
+| Message Type | Version 2 | Version 3 | Version 4 | Version 5/6 | Parser Function |
+|--------------|-----------|-----------|-----------|-------------|-----------------|
 | 0 | Unknown | Unknown | Unknown | Unknown | Not supported |
 | 1 | Detections | ADCData | ADCData | ADCData | `parse_dopplium_raw` |
 | 2 | Tracks | RDCMaps (RDCh) | RDCMaps (RDCh) | RDCMaps (RDCh) | `parse_dopplium_rdch` |

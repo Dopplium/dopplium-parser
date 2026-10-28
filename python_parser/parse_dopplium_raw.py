@@ -3,10 +3,17 @@ Parser for Dopplium RawData/ADC binary format.
 
 Supports:
 - Version 2, message_type 3: RawData/ADC
-- Version 3/4/5, message_type 1: ADCData
+- Version 3/4/5/6, message_type 1: ADCData
 
 Returns numpy arrays shaped [samples, chirpsPerTx, channels, frames] and all headers.
-Handles body header config_version 1/2/3, with config_version 3 adding channel_order.
+Handles body header config_version 1/2/3/4, with config_version 3 adding channel_order.
+
+DOP-BIN 2.0 (file version 6, config_version 4, multiplexing_mode 2): every frame
+has a 32-byte payload header carrying a tx_map, the frame's repeating transmitter
+pattern. n_chirps_per_frame counts every chirp of the frame, so the data is returned
+shaped [samples, chirps, receivers, frames] with the chirps in transmission order,
+and chirp c of frame i was sent by headers["frame"][i].tx_map[c % L].
+Use split_pattern_slots() to group a frame by pattern slot.
 """
 
 from __future__ import annotations
@@ -14,12 +21,20 @@ import io
 import math
 import struct
 from dataclasses import dataclass
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Dict, Any, Optional, Sequence
 
 import numpy as np
 
 from ._verbose import _validate_verbose
 from .parse_dopplium_header import FileHeader, parse_file_header
+
+
+FRAME_HEADER_BASE_SIZE = 24        # payload header up to frame_payload_size
+TX_MAP_FRAME_HEADER_SIZE = 32      # DOP-BIN 2.0 payload header: + tx_map[4] + reserved[4]
+TX_MAP_LENGTH = 4
+MULTIPLEXING_MODE_TX_MAP = 2       # TDM with a per-frame tx_map (DOP-BIN 2.0)
+TX_MAP_MIN_FILE_VERSION = 6
+TX_MAP_MIN_CONFIG_VERSION = 4
 
 
 # ==============================
@@ -36,14 +51,15 @@ class BodyHeader:
     reserved1: int
     total_frame_size: int
     n_samples_per_chirp: int
-    n_chirps_per_frame: int  # semantically "per TX" in your format (but we also handle "total" via inference)
+    n_chirps_per_frame: int  # semantically "per TX" in your format (but we also handle "total" via inference); all chirps in multiplexing_mode 2
     bits_per_sample: int
     n_receivers: int
-    n_transmitters: int
+    n_transmitters: int        # information only in multiplexing_mode 2
     sample_type: int           # 0=real, 1=complex(IQ)
     data_order: int            # 0=ByChannel
     iq_order: int              # 0..3
     sample_format: int         # 0=16-bit aligned
+    multiplexing_mode: int     # 0=MIMO, 1=Beamforming, 2=TDM with per-frame tx_map
     reserved2: int
     start_freq_ghz: float
     bandwidth_ghz: float
@@ -74,6 +90,9 @@ class FrameHeader:
     frame_timestamp_utc_ticks: int
     frame_number: int
     frame_payload_size: int
+    # multiplexing_mode 2 only: the frame's transmitter pattern, e.g. (1, 2) or (2,);
+    # () when the frame carries no transmitter information. None in other modes.
+    tx_map: Optional[Tuple[int, ...]] = None
 
 
 # ==============================
@@ -96,7 +115,11 @@ def parse_dopplium_raw(
 
     - If nTx==1: channel == nRx (receiver index).
     - If nTx>1 : channel == tx*nRx + rx  (0-based; tx in [0..nTx-1], rx in [0..nRx-1]).
-    
+    - multiplexing_mode 2 (DOP-BIN 2.0): shaped [samples, chirps, receivers, frame] with
+      every chirp of the frame in transmission order; n_transmitters does not affect
+      decoding. Chirp c of frame i was sent by headers["frame"][i].tx_map[c % L].
+      A frame whose tx_map is invalid raises ValueError.
+
     Parameters:
     -----------
     filename : str
@@ -133,10 +156,10 @@ def parse_dopplium_raw(
         
         # Check message type based on version
         # Version 2: message_type = 3 (RawData)
-        # Version 3/4/5: message_type = 1 (ADCData)
+        # Version 3/4/5/6: message_type = 1 (ADCData)
         if FH.version == 2 and FH.message_type != 3:
             raise ValueError(f"This file is not RawData (message_type={FH.message_type}, expected 3 for version 2).")
-        elif FH.version in (3, 4, 5) and FH.message_type != 1:
+        elif FH.version in (3, 4, 5, 6) and FH.message_type != 1:
             raise ValueError(
                 f"This file is not ADCData (message_type={FH.message_type}, expected 1 for version {FH.version})."
             )
@@ -161,6 +184,12 @@ def parse_dopplium_raw(
             raise NotImplementedError("Only sample_format=0 (16-bit aligned) is supported.")
         if BH.bits_per_sample != 16:
             raise NotImplementedError("Expected 16 bits per sample.")
+
+        tx_map_mode = _check_multiplexing_mode(FH, BH)
+        if tx_map_mode:
+            # n_transmitters is information only in mode 2: the chirps stay in
+            # transmission order and each frame's tx_map names their transmitters.
+            nTx = 1
 
         bytes_per_frame = int(BH.bytes_per_frame)
         bytes_per_element = int(BH.bytes_per_element)
@@ -189,14 +218,23 @@ def parse_dopplium_raw(
             raise ValueError("Invalid header values (zero-sized denominator for chirp inference).")
         Ctot_hdr_float = n_int16_hdr / denom
         Ctot_hdr = int(round(Ctot_hdr_float))
+        if tx_map_mode and Cptx_hdr * denom * 2 != bytes_per_frame:
+            raise ValueError(
+                f"multiplexing_mode 2: bytes_per_frame={bytes_per_frame} does not hold "
+                f"n_chirps_per_frame={Cptx_hdr} chirps x {nRx} receivers x {S} samples."
+            )
         if abs(Ctot_hdr - Ctot_hdr_float) > 1e-6:
             print(f"Warning: total-chirps inference non-integer ({Ctot_hdr_float:.3f}); rounding to {Ctot_hdr}.")
 
         # Decide chirpsPerTx we expose on dim-2
+        # Mode 2: every chirp of the frame, in transmission order
         # Primary: if (Cptx_hdr * nTx == Ctot_hdr) -> header is per-TX
         # Else if (Cptx_hdr == Ctot_hdr) -> header was "total chirps"
         # Else: general fallback -> chirpsPerTx = ceil(Ctot_hdr / max(nTx,1))
-        if nTx > 1 and Cptx_hdr * nTx == Ctot_hdr:
+        if tx_map_mode:
+            chirps_per_tx = Ctot_hdr
+            interpret = "tx_map (all chirps, transmission order)"
+        elif nTx > 1 and Cptx_hdr * nTx == Ctot_hdr:
             chirps_per_tx = Cptx_hdr
             interpret = "per-tx"
         elif Cptx_hdr == Ctot_hdr:
@@ -235,7 +273,17 @@ def parse_dopplium_raw(
 
         for fi in range(n_frames):
             frame_index = start_frame + fi
-            FR = _read_frame_header(f, endian_prefix)
+            try:
+                FR = _read_frame_header(f, endian_prefix, tx_map_mode=tx_map_mode)
+            except ValueError as exc:
+                raise ValueError(f"Frame {frame_index+1}: {exc}") from None
+            if tx_map_mode:
+                if FR.frame_header_size != FH.frame_header_size:
+                    raise ValueError(f"Frame {frame_index+1}: frame_header_size={FR.frame_header_size} differs "
+                                     f"from the file's payload_header_size={FH.frame_header_size}.")
+                if FR.tx_map and Ctot_hdr % len(FR.tx_map) != 0:
+                    raise ValueError(f"Frame {frame_index+1}: tx_map {list(FR.tx_map)} has length "
+                                     f"{len(FR.tx_map)}, which does not divide {Ctot_hdr} chirps.")
             frame_headers.append(FR)
             if FR.frame_payload_size != bytes_per_frame:
                 raise ValueError(f"Frame {frame_index+1}: payload size mismatch: header={FR.frame_payload_size}, "
@@ -290,7 +338,7 @@ def parse_dopplium_raw(
                         # COMPLEX - decode based on body header config_version
                         if BH.config_version == 1:
                             z = _decode_iq_v1(seg, S, BH.iq_order, cast, return_complex=return_complex)
-                        elif BH.config_version in (2, 3):
+                        elif BH.config_version in (2, 3, 4):
                             z = _decode_iq_v2(seg, S, BH.iq_order, cast, return_complex=return_complex)
                         else:
                             raise ValueError(f"Unsupported body header config_version: {BH.config_version}")
@@ -322,11 +370,67 @@ def parse_dopplium_raw(
             "frame": frame_headers,
         }
 
+        if tx_map_mode and verbose >= 2:
+            patterns: Dict[Tuple[int, ...], int] = {}
+            for FR in frame_headers:
+                patterns[FR.tx_map] = patterns.get(FR.tx_map, 0) + 1
+            listed = ", ".join(f"{list(tx_map)} x{count}" for tx_map, count in patterns.items())
+            print(f"tx_map patterns (frames): {listed or 'none'}")
+
         if verbose >= 1:
-            print(f"\nParsed data shape: {tuple(data.shape)}  "
-                  f"[samples, chirpsPerTx, channels, frames]")
+            axes = "[samples, chirps, receivers, frames]" if tx_map_mode else "[samples, chirpsPerTx, channels, frames]"
+            print(f"\nParsed data shape: {tuple(data.shape)}  {axes}")
 
         return data, headers
+
+
+def parse_tx_map(raw: Sequence[int]) -> Tuple[int, ...]:
+    """
+    Decode the 4 tx_map bytes of a DOP-BIN 2.0 ADC payload header.
+
+    Entries are transmitter numbers 1-255 and the list ends at the first 0, so
+    [1, 2, 0, 0] gives (1, 2) and [0, 0, 0, 0] gives () (no transmitter
+    information). A map with a non-zero entry after the terminating 0, such as
+    [1, 0, 2, 0], is invalid and raises ValueError; it is never repaired.
+    """
+    entries = [int(value) for value in raw]
+    if len(entries) != TX_MAP_LENGTH:
+        raise ValueError(f"tx_map must have {TX_MAP_LENGTH} entries, got {len(entries)}")
+    length = entries.index(0) if 0 in entries else len(entries)
+    if any(entries[length:]):
+        raise ValueError(f"invalid tx_map {entries}: non-zero entry after the terminating 0")
+    return tuple(entries[:length])
+
+
+def split_pattern_slots(frame: np.ndarray, tx_map: Sequence[int]) -> np.ndarray:
+    """
+    Split one multiplexing_mode 2 frame into its pattern slots.
+
+    Parameters:
+    -----------
+    frame : np.ndarray
+        One frame shaped [samples, chirps, receivers] with the chirps in
+        transmission order, e.g. data[:, :, :, i] from parse_dopplium_raw
+    tx_map : sequence of int
+        That frame's transmitter pattern, headers["frame"][i].tx_map
+
+    Returns:
+    --------
+    np.ndarray shaped [samples, chirps // L, L, receivers], L = len(tx_map).
+    Element [:, m, k, :] is chirp c = m*L + k, sent by transmitter tx_map[k].
+    The chirps of one slot are L*PRI apart, so Doppler processing runs along
+    axis 1 of each slot; slot k starts k*PRI after slot 0.
+    """
+    frame = np.asarray(frame)
+    if frame.ndim != 3:
+        raise ValueError(f"frame must be shaped [samples, chirps, receivers], got shape {frame.shape}")
+    length = len(tx_map)
+    if length == 0:
+        raise ValueError("frame carries no transmitter information (empty tx_map), so it has no pattern slots")
+    n_samples, n_chirps, n_receivers = frame.shape
+    if n_chirps % length != 0:
+        raise ValueError(f"tx_map length {length} does not divide {n_chirps} chirps")
+    return frame.reshape(n_samples, n_chirps // length, length, n_receivers)
 
 
 # ==============================
@@ -350,6 +454,27 @@ def _coerce_optional_nonnegative_int(value: Optional[int], name: str) -> Optiona
     return coerced
 
 
+def _check_multiplexing_mode(FH: FileHeader, BH: BodyHeader) -> bool:
+    """Validate multiplexing_mode; True for mode 2 (per-frame tx_map)."""
+    mode = int(BH.multiplexing_mode)
+    if mode > MULTIPLEXING_MODE_TX_MAP:
+        raise NotImplementedError(f"Unsupported multiplexing_mode={mode}. Supported: 0 (MIMO), 1 (Beamforming), "
+                                  f"2 (TDM with per-frame tx_map).")
+    if mode != MULTIPLEXING_MODE_TX_MAP:
+        return False
+    if FH.version < TX_MAP_MIN_FILE_VERSION:
+        raise ValueError(f"multiplexing_mode 2 requires file version >= {TX_MAP_MIN_FILE_VERSION}, "
+                         f"got {FH.version}.")
+    if BH.config_version < TX_MAP_MIN_CONFIG_VERSION:
+        raise ValueError(f"multiplexing_mode 2 requires config_version >= {TX_MAP_MIN_CONFIG_VERSION}, "
+                         f"got {BH.config_version}.")
+    if FH.frame_header_size < TX_MAP_FRAME_HEADER_SIZE or BH.frame_header_size != FH.frame_header_size:
+        raise ValueError(f"multiplexing_mode 2 requires a payload header of at least {TX_MAP_FRAME_HEADER_SIZE} "
+                         f"bytes in both file and body header, got {FH.frame_header_size} and "
+                         f"{BH.frame_header_size}.")
+    return True
+
+
 def _read_body_header(f: io.BufferedReader, ep: str) -> BodyHeader:
     # See MATLAB mapping; matches 192 bytes
     fmt = (
@@ -369,7 +494,8 @@ def _read_body_header(f: io.BufferedReader, ep: str) -> BodyHeader:
         "B"    # data_order
         "B"    # iq_order
         "B"    # sample_format
-        "H"    # reserved2
+        "B"    # multiplexing_mode
+        "B"    # reserved2
         "d"    # start_freq_ghz
         "d"    # bandwidth_ghz
         "d"    # idle_time_us
@@ -395,7 +521,7 @@ def _read_body_header(f: io.BufferedReader, ep: str) -> BodyHeader:
     if len(raw) != size:
         raise EOFError("Failed to read body header.")
     unpacked = struct.unpack(fmt, raw)
-    channel_order = np.array(unpacked[33:63], dtype=np.int8)
+    channel_order = np.array(unpacked[34:64], dtype=np.int8)
 
     # In config versions before 3, these bytes are reserved/unknown.
     # Keep deterministic fallback behavior by exposing a zeroed order vector.
@@ -426,30 +552,31 @@ def _read_body_header(f: io.BufferedReader, ep: str) -> BodyHeader:
         data_order=unpacked[12],
         iq_order=unpacked[13],
         sample_format=unpacked[14],
-        reserved2=unpacked[15],
-        start_freq_ghz=unpacked[16],
-        bandwidth_ghz=unpacked[17],
-        idle_time_us=unpacked[18],
-        tx_start_time_us=unpacked[19],
-        adc_start_time_us=unpacked[20],
-        ramp_end_time_us=unpacked[21],
-        sample_rate_ksps=unpacked[22],
-        slope_mhz_per_us=unpacked[23],
-        frame_periodicity_ms=unpacked[24],
-        bytes_per_element=unpacked[25],
-        bytes_per_sample=unpacked[26],
-        samples_per_frame=unpacked[27],
-        bytes_per_frame=unpacked[28],
-        max_range_m=unpacked[29],
-        max_velocity_mps=unpacked[30],
-        range_resolution_m=unpacked[31],
-        velocity_resolution_mps=unpacked[32],
+        multiplexing_mode=unpacked[15],
+        reserved2=unpacked[16],
+        start_freq_ghz=unpacked[17],
+        bandwidth_ghz=unpacked[18],
+        idle_time_us=unpacked[19],
+        tx_start_time_us=unpacked[20],
+        adc_start_time_us=unpacked[21],
+        ramp_end_time_us=unpacked[22],
+        sample_rate_ksps=unpacked[23],
+        slope_mhz_per_us=unpacked[24],
+        frame_periodicity_ms=unpacked[25],
+        bytes_per_element=unpacked[26],
+        bytes_per_sample=unpacked[27],
+        samples_per_frame=unpacked[28],
+        bytes_per_frame=unpacked[29],
+        max_range_m=unpacked[30],
+        max_velocity_mps=unpacked[31],
+        range_resolution_m=unpacked[32],
+        velocity_resolution_mps=unpacked[33],
         channel_order=channel_order,
-        _reserved3=unpacked[63],
+        _reserved3=unpacked[64],
     )
 
 
-def _read_frame_header(f: io.BufferedReader, ep: str) -> FrameHeader:
+def _read_frame_header(f: io.BufferedReader, ep: str, tx_map_mode: bool = False) -> FrameHeader:
     fmt = f"{ep}4sHHqII"
     size = struct.calcsize(fmt)
     raw = f.read(size)
@@ -460,8 +587,22 @@ def _read_frame_header(f: io.BufferedReader, ep: str) -> FrameHeader:
     frame_magic = frame_magic_b.decode("ascii")
     if frame_magic != "FRME":
         raise ValueError("Invalid frame magic.")
-    if frame_header_size < 24:
+    if frame_header_size < FRAME_HEADER_BASE_SIZE:
         raise ValueError("Unexpected frame_header_size in frame header.")
+
+    # Consume the rest of the header so the payload read starts at the right byte.
+    # In multiplexing_mode 2 it starts with tx_map (bytes 24-27), then 4 reserved bytes.
+    extra_size = frame_header_size - FRAME_HEADER_BASE_SIZE
+    extra = f.read(extra_size)
+    if len(extra) != extra_size:
+        raise EOFError("Failed to read frame header.")
+    tx_map = None
+    if tx_map_mode:
+        if frame_header_size < TX_MAP_FRAME_HEADER_SIZE:
+            raise ValueError(f"frame_header_size={frame_header_size} is too small to hold a tx_map "
+                             f"(multiplexing_mode 2 needs {TX_MAP_FRAME_HEADER_SIZE}).")
+        tx_map = parse_tx_map(extra[:TX_MAP_LENGTH])
+
     return FrameHeader(
         frame_magic=frame_magic,
         header_type=header_type,
@@ -469,6 +610,7 @@ def _read_frame_header(f: io.BufferedReader, ep: str) -> FrameHeader:
         frame_timestamp_utc_ticks=frame_timestamp_utc_ticks,
         frame_number=frame_number,
         frame_payload_size=frame_payload_size,
+        tx_map=tx_map,
     )
 
 
@@ -654,6 +796,8 @@ def _print_header_summary(FH: FileHeader, BH: BodyHeader) -> None:
     stype = "Real" if BH.sample_type == 0 else "Complex"
     print(f"Samples/Chirp={BH.n_samples_per_chirp}  ChirpsPerTX/Frame={BH.n_chirps_per_frame}  Rx={BH.n_receivers}  Tx={BH.n_transmitters}")
     print(f"SampleType={stype}  IQOrder={BH.iq_order}  DataOrder={BH.data_order}  BitsPerSample={BH.bits_per_sample}")
+    mux_name = {0: "MIMO", 1: "Beamforming", 2: "TDM, per-frame tx_map"}.get(BH.multiplexing_mode, "Unknown")
+    print(f"MultiplexingMode={mux_name} ({BH.multiplexing_mode})  ConfigVersion={BH.config_version}")
     print(f"Bytes/Element={BH.bytes_per_element}  Bytes/Sample={BH.bytes_per_sample}  Bytes/Frame={BH.bytes_per_frame}  TotalFrameSize={BH.total_frame_size}")
     print(f"StartFreq={BH.start_freq_ghz:.3f} GHz  BW={BH.bandwidth_ghz:.3f} GHz  Fs={BH.sample_rate_ksps:.1f} ksps  Slope={BH.slope_mhz_per_us:.3f} MHz/us")
     print(f"FramePeriod={BH.frame_periodicity_ms:.3f} ms  RampEnd={BH.ramp_end_time_us:.3f} us")
