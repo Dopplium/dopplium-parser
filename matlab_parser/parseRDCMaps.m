@@ -1,5 +1,5 @@
 function [data, headers] = parseRDCMaps(fid, FH, machinefmt, filename, opts)
-% PARSERDCMAPS Parse Dopplium RDC Maps data (v3/v4/v5 message_type=2)
+% PARSERDCMAPS Parse Dopplium RDC Maps data (v3/v4/v5/v6 message_type=2)
 %   [data, headers] = parseRDCMaps(fid, FH, machinefmt, filename, opts)
 %
 %   Returns:
@@ -10,10 +10,10 @@ function [data, headers] = parseRDCMaps(fid, FH, machinefmt, filename, opts)
 %   limit the number of CPIs read after that start index.
 
 % Version/message validation (match Python behavior)
-if ~(FH.version == 3 || FH.version == 4 || FH.version == 5) || FH.message_type ~= 2
+if ~(FH.version == 3 || FH.version == 4 || FH.version == 5 || FH.version == 6) || FH.message_type ~= 2
     error('parseRDCMaps:InvalidMessageType', ...
         ['This file is not RDCMaps/RDCh (version=%d, message_type=%d, ' ...
-         'expected version=3/4/5, type=2).'], ...
+         'expected version=3/4/5/6, type=2).'], ...
         FH.version, FH.message_type);
 end
 

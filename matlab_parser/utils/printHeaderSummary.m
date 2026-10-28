@@ -24,6 +24,8 @@ function printHeaderSummary(FH, BH)
             muxName = 'MIMO';
         elseif BH.multiplexing_mode == 1
             muxName = 'Beamforming';
+        elseif BH.multiplexing_mode == 2
+            muxName = 'TDM, per-frame tx_map';
         end
         fprintf('MultiplexingMode=%s (%d)\n', muxName, BH.multiplexing_mode);
     end

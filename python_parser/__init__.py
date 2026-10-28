@@ -3,6 +3,8 @@
 from .parse_dopplium import parse_dopplium
 from .parse_dopplium_raw import (
     parse_dopplium_raw,
+    parse_tx_map,
+    split_pattern_slots,
     BodyHeader,
     FrameHeader,
 )
@@ -68,6 +70,8 @@ __all__ = [
     "parse_dopplium_detections",
     "parse_dopplium_blobs",
     "parse_dopplium_tracks",
+    "parse_tx_map",
+    "split_pattern_slots",
     "FileHeader",
     "BodyHeader",
     "FrameHeader",

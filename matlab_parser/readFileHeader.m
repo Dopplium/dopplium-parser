@@ -1,5 +1,5 @@
 function FH = readFileHeader(fid, machinefmt)
-% READFILEHEADER Read Dopplium file header (v2/v3/v4/v5 base + optional extension)
+% READFILEHEADER Read Dopplium file header (v2/v3/v4/v5/v6 base + optional extension)
 %   FH = readFileHeader(fid, machinefmt)
 %
 %   INPUTS
@@ -15,6 +15,7 @@ function FH = readFileHeader(fid, machinefmt)
 %          .total_payload_bytes, .reserved1, .node_id
 %          plus v4+ location extension when present.
 %          In version >= 5, total_payload_bytes is uint64 and reserved1 is not serialized.
+%          Version 6 (DOP-BIN 2.0) keeps the version 5 layout.
 
     headerStart = ftell(fid);
     FH.magic                   = char(fread(fid, [1,4], '*char'));

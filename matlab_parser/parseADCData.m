@@ -13,6 +13,16 @@ function [data, headers] = parseADCData(fid, FH, machinefmt, filename, opts)
 %   OUTPUTS
 %     data    : array shaped [samples, chirpsPerTx, channel, frame]
 %     headers : struct with file/body/frame headers and derived info
+%
+%   DOP-BIN 2.0 (file version 6, config_version 4, multiplexing_mode 2):
+%   every frame carries a tx_map, its repeating transmitter pattern, and
+%   n_chirps_per_frame counts every chirp. data is then shaped
+%   [samples, chirps, receivers, frame] with the chirps in transmission
+%   order; chirp c (1-based) of frame i was sent by
+%   headers.frame(i).tx_map(mod(c-1, L) + 1), L = numel(tx_map). An empty
+%   tx_map means the frame carries no transmitter information. A frame with
+%   an invalid tx_map raises an error. Use splitPatternSlots to group a
+%   frame by pattern slot.
 
 if nargin < 5 || isempty(opts)
     opts = struct;
@@ -57,6 +67,13 @@ assert(BH.sample_format == 0, 'Only 16-bit aligned samples supported (sample_for
 assert(ismember(double(BH.bits_per_sample), [12, 14, 16]), ...
     'Unsupported bits_per_sample=%d (expected one of 12, 14, 16).', BH.bits_per_sample);
 
+txMapMode = checkMultiplexingMode(FH, BH);
+if txMapMode
+    % n_transmitters is information only in mode 2: the chirps stay in
+    % transmission order and each frame's tx_map names their transmitters.
+    nTx = 1;
+end
+
 % Header-guided sizing
 bytesPerElement   = double(BH.bytes_per_element);     % should be 2 if int16 containers
 bytesPerSample    = double(BH.bytes_per_sample);      % bytes per (real or complex) sample
@@ -84,10 +101,18 @@ end
 if Ctot <= 0
     error('Invalid inferred total chirp count: %d.', Ctot);
 end
+if txMapMode && CptxHdr * denom * 2 ~= bytesPerFrame
+    error('dopplium:txMapRequirements', ...
+        'multiplexing_mode 2: bytes_per_frame=%d does not hold n_chirps_per_frame=%d chirps x %d receivers x %d samples.', ...
+        bytesPerFrame, CptxHdr, nRx, S);
+end
 
 % Build TX mapping from multiplexing mode and channel order.
 [txSeq, cTxSeq, chirpsPerTx, chirpInterpretation] = ...
     buildTxMapping(BH, Ctot, nTx, CptxHdr, opts.verbose);
+if txMapMode
+    chirpInterpretation = 'tx_map (all chirps, transmission order)';
+end
 
 % Determine number of frames from file size
 fileInfo = dir(filename);
@@ -131,7 +156,6 @@ for f = 1:nFrames
     frameIndex = startFrame + f - 1;
     frameOrdinal = frameIndex + 1;
     FR = readFrameHeader(fid, machinefmt);
-    frames(f) = FR;
 
     if FR.frame_payload_size ~= bytesPerFrame
         error('Frame %d payload size mismatch: header=%d, expected=%d', ...
@@ -142,9 +166,12 @@ for f = 1:nFrames
     extraFrameHeaderBytes = double(FR.frame_header_size) - 24;
     if extraFrameHeaderBytes < 0
         error('Frame %d has invalid frame_header_size=%d (<24).', frameOrdinal, FR.frame_header_size);
+    elseif txMapMode
+        FR = readFrameTxMap(fid, machinefmt, FR, FH, Ctot, frameOrdinal);
     elseif extraFrameHeaderBytes > 0
         fseek(fid, extraFrameHeaderBytes, 'cof');
     end
+    frames(f) = FR;
 
     % Ground truth count from header:
     nInt16_hdr = bytesPerFrame / 2;
@@ -207,8 +234,7 @@ for f = 1:nFrames
                     % Decode based on body header config version
                     if BH.config_version == 1
                         z = decodeIQV1(seg, S, BH.iq_order, opts);
-                    elseif BH.config_version == 2 || BH.config_version == 3
-                        % v3 = v2 layout with channel_order declared valid
+                    elseif ismember(double(BH.config_version), [2, 3, 4])
                         z = decodeIQV2(seg, S, BH.iq_order, opts);
                     else
                         error('Unsupported body header config_version: %d', BH.config_version);
@@ -250,12 +276,18 @@ headers.frame = frames;
 if opts.verbose
     fprintf('Chirp interpretation: %s | total_on_wire=%d | chirpsPerTx(dim-2)=%d | nTx=%d\n', ...
         chirpInterpretation, Ctot, chirpsPerTx, nTx);
-    fprintf('\nParsed data shape: [samples=%d, chirpsPerTx=%d, channels=%d, frames=%d]\n', ...
-        size(data,1), size(data,2), size(data,3), size(data,4));
-    if nTx > 1
-        fprintf('Multi-TX: nTx=%d, total chirps on wire per frame=%d\n', nTx, Ctot);
+    if txMapMode
+        fprintf('\nParsed data shape: [samples=%d, chirps=%d, receivers=%d, frames=%d]\n', ...
+            size(data,1), size(data,2), size(data,3), size(data,4));
+        printTxMapPatterns(frames);
     else
-        fprintf('Single-TX: total chirps per frame=%d\n', Ctot);
+        fprintf('\nParsed data shape: [samples=%d, chirpsPerTx=%d, channels=%d, frames=%d]\n', ...
+            size(data,1), size(data,2), size(data,3), size(data,4));
+        if nTx > 1
+            fprintf('Multi-TX: nTx=%d, total chirps on wire per frame=%d\n', nTx, Ctot);
+        else
+            fprintf('Single-TX: total chirps per frame=%d\n', Ctot);
+        end
     end
 end
 end
@@ -315,6 +347,7 @@ function FR = readFrameHeader(fid, machinefmt)
     if FR.frame_header_size < 24
         error('Unexpected frame_header_size in frame header.');
     end
+    FR.tx_map = []; % multiplexing_mode 2 only, set by readFrameTxMap
 end
 
 function s = emptyFrameHeader()
@@ -324,7 +357,86 @@ function s = emptyFrameHeader()
         'frame_header_size',        0, ...
         'frame_timestamp_utc_ticks',0, ...
         'frame_number',             0, ...
-        'frame_payload_size',       0);
+        'frame_payload_size',       0, ...
+        'tx_map',                   []);
+end
+
+% ================== DOP-BIN 2.0 (multiplexing_mode 2) ==================
+
+function txMapMode = checkMultiplexingMode(FH, BH)
+% CHECKMULTIPLEXINGMODE Validate multiplexing_mode; true for mode 2 (per-frame tx_map).
+    mode = double(BH.multiplexing_mode);
+    if mode > 2
+        error('dopplium:unsupportedMultiplexingMode', ...
+            ['Unsupported multiplexing_mode=%d. Supported: 0 (MIMO), 1 (Beamforming), ' ...
+             '2 (TDM with per-frame tx_map).'], mode);
+    end
+    txMapMode = (mode == 2);
+    if ~txMapMode
+        return;
+    end
+    if double(FH.version) < 6
+        error('dopplium:txMapRequirements', ...
+            'multiplexing_mode 2 requires file version >= 6, got %d.', FH.version);
+    end
+    if double(BH.config_version) < 4
+        error('dopplium:txMapRequirements', ...
+            'multiplexing_mode 2 requires config_version >= 4, got %d.', BH.config_version);
+    end
+    if double(FH.payload_header_size) < 32 || double(BH.frame_header_size) ~= double(FH.payload_header_size)
+        error('dopplium:txMapRequirements', ...
+            ['multiplexing_mode 2 requires a payload header of at least 32 bytes in both file ' ...
+             'and body header, got %d and %d.'], FH.payload_header_size, BH.frame_header_size);
+    end
+end
+
+function FR = readFrameTxMap(fid, machinefmt, FR, FH, Ctot, frameOrdinal)
+% READFRAMETXMAP Read the rest of a 32-byte payload header: tx_map (bytes 24-27), reserved.
+    if double(FR.frame_header_size) ~= double(FH.payload_header_size)
+        error('dopplium:txMapRequirements', ...
+            'Frame %d: frame_header_size=%d differs from the file''s payload_header_size=%d.', ...
+            frameOrdinal, FR.frame_header_size, FH.payload_header_size);
+    end
+    nExtra = double(FR.frame_header_size) - 24;
+    extra = fread(fid, nExtra, '*uint8', 0, machinefmt);
+    if numel(extra) ~= nExtra
+        error('Unexpected EOF while reading frame %d header.', frameOrdinal);
+    end
+    FR.tx_map = parseTxMap(extra(1:4), frameOrdinal);
+    L = numel(FR.tx_map);
+    if L > 0 && mod(Ctot, L) ~= 0
+        error('dopplium:txMapLength', ...
+            'Frame %d: tx_map %s has length %d, which does not divide %d chirps.', ...
+            frameOrdinal, mat2str(FR.tx_map), L, Ctot);
+    end
+end
+
+function txMap = parseTxMap(raw, frameOrdinal)
+% PARSETXMAP Pattern from the 4 tx_map bytes. The list ends at the first 0;
+% a non-zero entry after it (e.g. [1 0 2 0]) is invalid and is never repaired.
+    raw = double(raw(:)');
+    L = find(raw == 0, 1, 'first') - 1;
+    if isempty(L)
+        L = numel(raw);
+    end
+    if any(raw(L+1:end))
+        error('dopplium:invalidTxMap', ...
+            'Frame %d: invalid tx_map %s: non-zero entry after the terminating 0.', ...
+            frameOrdinal, mat2str(raw));
+    end
+    txMap = raw(1:L);
+end
+
+function printTxMapPatterns(frames)
+% PRINTTXMAPPATTERNS List the distinct tx_map patterns and how many frames use each.
+    keys = arrayfun(@(fr) ['[' strtrim(sprintf('%d ', fr.tx_map)) ']'], frames, 'UniformOutput', false);
+    [patterns, ~, idx] = unique(keys, 'stable');
+    counts = accumarray(idx(:), 1);
+    parts = cell(1, numel(patterns));
+    for k = 1:numel(patterns)
+        parts{k} = sprintf('%s x%d', patterns{k}, counts(k));
+    end
+    fprintf('tx_map patterns (frames): %s\n', strjoin(parts, ', '));
 end
 
 function z = decodeIQV1(segInt16, S, iqOrder, opts)

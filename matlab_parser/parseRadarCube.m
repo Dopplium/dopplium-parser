@@ -1,5 +1,5 @@
 function [data, headers] = parseRadarCube(fid, FH, machinefmt, filename, opts)
-% PARSERADARCUBE Parse Dopplium RadarCube data (v3/v4/v5 message_type=3)
+% PARSERADARCUBE Parse Dopplium RadarCube data (v3/v4/v5/v6 message_type=3)
 %   [data, headers] = parseRadarCube(fid, FH, machinefmt, filename, opts)
 %
 %   Returns:
@@ -9,10 +9,10 @@ function [data, headers] = parseRadarCube(fid, FH, machinefmt, filename, opts)
 %   opts.startFrame is a zero-based CPI index. opts.maxFrames/opts.maxCPIs
 %   limit the number of CPIs read after that start index.
 
-if ~(FH.version == 3 || FH.version == 4 || FH.version == 5) || FH.message_type ~= 3
+if ~(FH.version == 3 || FH.version == 4 || FH.version == 5 || FH.version == 6) || FH.message_type ~= 3
     error('parseRadarCube:InvalidMessageType', ...
         ['This file is not RadarCube (version=%d, message_type=%d, ' ...
-         'expected version=3/4/5, type=3).'], ...
+         'expected version=3/4/5/6, type=3).'], ...
         FH.version, FH.message_type);
 end
 
